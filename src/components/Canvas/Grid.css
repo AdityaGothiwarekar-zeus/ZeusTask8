@@ -1,0 +1,71 @@
+.grid-wrapper {
+  position: relative;
+  user-select: none;
+  font-family: Arial, sans-serif;
+}
+
+.formula-bar {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  background: #eee;
+  border-bottom: 1px solid #ccc;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.cell-label {
+  width: 60px;
+  font-weight: bold;
+  background: #eee;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.formula-input {
+  flex: 1;
+  margin-left: 8px;
+  padding: 6px 8px;
+  font-size: 16px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.spreadsheet-canvas {
+  display: block;
+  cursor: default;
+  user-select: none;
+  width: 100%;
+}
+
+.cell-input {
+  position: absolute;
+  padding: 2px 4px;
+  font-size: 14px;
+  border: 1px solid #4a90e2;
+  outline: none;
+  background: white;
+  z-index: 10;
+}
+
+.col-resize-handle,
+.row-resize-handle {
+  position: absolute;
+  z-index: 40;
+  background: transparent;
+}
+
+.col-resize-handle {
+  width: 8px;
+  top: 0;
+  cursor: col-resize;
+}
+
+.row-resize-handle {
+  height: 8px;
+  left: 0;
+  cursor: row-resize;
+}
