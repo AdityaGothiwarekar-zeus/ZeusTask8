@@ -45,7 +45,7 @@
   position: absolute;
   padding: 2px 4px;
   font-size: 14px;
-  border: 1px solid #4a90e2;
+  /* border: 1px solid #107c41; */
   outline: none;
   background: white;
   z-index: 10;
@@ -69,3 +69,17 @@
   left: 0;
   cursor: row-resize;
 }
+.cell.highlight-row {
+  background-color: rgba(200, 200, 255, 0.2); /* Light blue row */
+}
+
+.cell.highlight-col {
+  background-color: rgba(200, 255, 200, 0.2); /* Light green column */
+}
+
+.cell.selected {
+  /* outline: 2px solid #107c41; */
+  background-color: #e6f7ff;
+  z-index: 1;
+}
+
