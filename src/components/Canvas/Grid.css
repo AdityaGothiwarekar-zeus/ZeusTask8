@@ -1,85 +1,73 @@
-.grid-wrapper {
+/* Spreadsheet.css */
+
+.spreadsheet-container {
   position: relative;
-  user-select: none;
-  font-family: Arial, sans-serif;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
 }
 
-.formula-bar {
+.toolbar {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  padding: 8px;
   display: flex;
   align-items: center;
-  padding: 8px;
-  background: #eee;
-  border-bottom: 1px solid #ccc;
-  position: sticky;
-  top: 0;
-  z-index: 30;
+  gap: 8px;
 }
 
-.cell-label {
-  width: 60px;
-  font-weight: bold;
-  background: #eee;
-  padding: 4px 8px;
+.cell-indicator {
+  background: white;
   border: 1px solid #ccc;
-  border-radius: 4px;
+  padding: 4px 8px;
+  min-width: 60px;
   text-align: center;
 }
 
-.formula-input {
-  flex: 1;
-  margin-left: 8px;
-  padding: 6px 8px;
-  font-size: 16px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+.cell-preview {
+  color: #666;
+  font-size: 14px;
 }
 
-.spreadsheet-canvas {
-  display: block;
-  cursor: default;
-  user-select: none;
+.canvas-wrapper {
+  position: relative;
   width: 100%;
+  height: calc(100vh - 200px);
+}
+
+.canvas-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.grid-canvas {
+  display: block;
+  border: 1px solid #ccc;
+  outline: none;
+}
+
+.vertical-scroll {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 17px;
+  height: 100%;
+  overflow-y: scroll;
+  overflow-x: hidden;
+}
+
+.scroll-spacer {
+  height: 100%;
+  width: 1px;
 }
 
 .cell-input {
-  position: absolute;
-  padding: 2px 4px;
-  font-size: 14px;
-  /* border: 1px solid #107c41; */
+  position: fixed;
+  border: 2px solid #107c41;
   outline: none;
+  padding: 0 4px;
+  font-size: 14px;
+  z-index: 1000;
   background: white;
-  z-index: 10;
 }
-
-.col-resize-handle,
-.row-resize-handle {
-  position: absolute;
-  z-index: 40;
-  background: transparent;
-}
-
-.col-resize-handle {
-  width: 8px;
-  top: 0;
-  cursor: col-resize;
-}
-
-.row-resize-handle {
-  height: 8px;
-  left: 0;
-  cursor: row-resize;
-}
-.cell.highlight-row {
-  background-color: rgba(200, 200, 255, 0.2); /* Light blue row */
-}
-
-.cell.highlight-col {
-  background-color: rgba(200, 255, 200, 0.2); /* Light green column */
-}
-
-.cell.selected {
-  /* outline: 2px solid #107c41; */
-  background-color: #e6f7ff;
-  z-index: 1;
-}
-
