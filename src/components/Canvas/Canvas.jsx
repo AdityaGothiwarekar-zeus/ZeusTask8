@@ -8,8 +8,9 @@ import {
   handleColumnSelection, 
   handleRowSelection, 
   getColumnFromHeaderClick, 
-  getRowFromHeaderClick, 
-  handleSelectAllClick 
+  getRowFromHeaderClick,
+  isColumnInSelection,
+  isRowInSelection 
 } from '../../SelectionHelper';
 
 const TOTAL_ROWS = 100000;
@@ -58,144 +59,184 @@ export default function GridPage() {
   // Calculate which rows should be visible based on scroll position
   const visibleRange = getVisibleRowRange(scrollTop, ROW_HEIGHT, CANVAS_HEIGHT, COL_HEADER_HEIGHT, TOTAL_ROWS);
 
-  const drawGrid = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
-    let dpr = window.getdevicePixelRatio || 1;
-    canvas.width = CANVAS_WIDTH;
-    canvas.height = CANVAS_HEIGHT;
-    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-    ctx.font = `14px ${fontFamily}`;
-    ctx.textBaseline = 'middle';
+const drawGrid = useCallback(() => {
+  const canvas = canvasRef.current;
+  if (!canvas) return;
 
-    const { startRow, endRow } = visibleRange;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
 
-    // Draw top-left corner (select all button)
-    ctx.fillStyle = '#f0f0f0';
-    ctx.fillRect(0, 0, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+  // Set canvas physical size (scaled by dpr)
+  canvas.width = CANVAS_WIDTH * dpr;
+  canvas.height = CANVAS_HEIGHT * dpr;
+
+  // Set canvas style size (logical dimensions)
+  canvas.style.width = `${CANVAS_WIDTH}px`;
+  canvas.style.height = `${CANVAS_HEIGHT}px`;
+
+  // Scale drawing context
+  ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform first
+  ctx.scale(dpr, dpr); // Now all drawing uses logical units
+
+  // Clear and set font
+  ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  ctx.font = `14px ${fontFamily}`;
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 0.4 / dpr; // Always 1px regardless of zoom
+
+  const { startRow, endRow } = visibleRange;
+
+  // Draw top-left corner (select all)
+  ctx.fillStyle = '#f0f0f0';
+  ctx.fillRect(0, 0, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+  ctx.strokeStyle = '#d8d9db';
+  ctx.strokeRect(0, 0, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+
+  // === Column Headers ===
+  ctx.fillStyle = '#f0f0f0';
+  ctx.fillRect(ROW_HEADER_WIDTH, 0, CANVAS_WIDTH - ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+
+  for (let c = 0; c < TOTAL_COLS; c++) {
+    const x = ROW_HEADER_WIDTH + c * COL_WIDTH;
+    if (x >= CANVAS_WIDTH) break;
+
+    const shouldHighlight = isColumnInSelection(c, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+
+    // Background color
+    ctx.fillStyle = shouldHighlight ? '#caead8' : '#f0f0f0';
+    ctx.fillRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
+
+    // Text
+    ctx.fillStyle = shouldHighlight ? '#0F7937' : 'black';
+    ctx.textAlign = 'center';
+    ctx.fillText(getColLetter(c), x + COL_WIDTH / 2, COL_HEADER_HEIGHT / 2);
+
+    // Borders
     ctx.strokeStyle = '#d8d9db';
-    ctx.strokeRect(0, 0, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+    ctx.strokeRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
 
-    // Draw column headers
-    ctx.fillStyle = '#f0f0f0';
-    ctx.fillRect(ROW_HEADER_WIDTH, 0, CANVAS_WIDTH - ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
-    
+    if (shouldHighlight) {
+      ctx.strokeStyle = '#0F7937'; // dark green
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, COL_HEADER_HEIGHT - 1);
+      ctx.lineTo(x + COL_WIDTH, COL_HEADER_HEIGHT - 1);
+      ctx.stroke();
+    }
+  }
+
+  // === Row Headers ===
+  ctx.fillStyle = '#f0f0f0';
+  ctx.fillRect(0, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, CANVAS_HEIGHT - COL_HEADER_HEIGHT);
+
+  for (let r = startRow; r < endRow; r++) {
+    const y = COL_HEADER_HEIGHT + (r - startRow) * ROW_HEIGHT;
+    if (y >= CANVAS_HEIGHT) break;
+
+    const shouldHighlight = isRowInSelection(r, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+
+    // Background
+    ctx.fillStyle = shouldHighlight ? '#caead8' : '#f0f0f0';
+    ctx.fillRect(0, y, ROW_HEADER_WIDTH, ROW_HEIGHT);
+
+    // Text
+    ctx.fillStyle = shouldHighlight ? '#0F7937' : 'black';
+    ctx.textAlign = 'center';
+    ctx.fillText(r + 1, ROW_HEADER_WIDTH / 2, y + ROW_HEIGHT / 2);
+
+    // Border
+    ctx.strokeStyle = '#d8d9db';
+    ctx.strokeRect(0, y, ROW_HEADER_WIDTH, ROW_HEIGHT);
+
+    if (shouldHighlight) {
+      ctx.strokeStyle = '#0F7937'; // dark green
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ROW_HEADER_WIDTH - 1, y);
+      ctx.lineTo(ROW_HEADER_WIDTH - 1, y + ROW_HEIGHT);
+      ctx.stroke();
+    }
+  }
+
+  // === Cells ===
+  for (let r = startRow; r < endRow; r++) {
+    const y = COL_HEADER_HEIGHT + (r - startRow) * ROW_HEIGHT;
+    if (y >= CANVAS_HEIGHT) break;
+
     for (let c = 0; c < TOTAL_COLS; c++) {
       const x = ROW_HEADER_WIDTH + c * COL_WIDTH;
       if (x >= CANVAS_WIDTH) break;
-      
-      // Highlight selected columns
-      const isColSelected = selection.isRange && 
-        selection.startRow === 0 && 
-        selection.endRow === TOTAL_ROWS - 1 &&
+
+      const key = `${r},${c}`;
+      const isCurrent = r === selected.r && c === selected.c;
+      const isInSelection = selection.isRange &&
+        r >= selection.startRow && r <= selection.endRow &&
         c >= selection.startCol && c <= selection.endCol;
-      
-      ctx.fillStyle = isColSelected ? '#107c41' : (c === selected.c ? '#107c41' : '#f0f0f0');
-      ctx.fillRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
+      const isFirstSelected = isInSelection && r === selection.startRow && c === selection.startCol;
+
+      // Background
+      let bgColor = 'white';
+      if (isCurrent) bgColor = '#f1faf1';
+      else if (isInSelection) bgColor = isFirstSelected ? '#ffffff' : '#f1faf1';
+
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(x, y, COL_WIDTH, ROW_HEIGHT);
+
+      // Cell border
       ctx.strokeStyle = '#d8d9db';
-      ctx.strokeRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
-      ctx.fillStyle = (c === selected.c || isColSelected) ? '#ffffff' : 'black';
-      ctx.textAlign = 'center';
-      ctx.fillText(getColLetter(c), x + COL_WIDTH / 2, COL_HEADER_HEIGHT / 2);
-    }
+      ctx.strokeRect(x + 0.5, y + 0.5, COL_WIDTH - 1, ROW_HEIGHT - 1);
+      ctx.lineWidth = 0.4;
 
-    // Draw row header background
-    ctx.fillStyle = '#f0f0f0';
-    ctx.fillRect(0, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, CANVAS_HEIGHT - COL_HEADER_HEIGHT);
-
-    // Draw visible rows
-    for (let r = startRow; r < endRow; r++) {
-      const canvasY = COL_HEADER_HEIGHT + ((r - startRow) * ROW_HEIGHT);
-      
-      if (canvasY >= CANVAS_HEIGHT) break;
-      
-      // Highlight selected rows
-      const isRowSelected = selection.isRange && 
-        selection.startCol === 0 && 
-        selection.endCol === TOTAL_COLS - 1 &&
-        r >= selection.startRow && r <= selection.endRow;
-      
-      // Draw row header
-      ctx.fillStyle = isRowSelected ? '#107c41' : (r === selected.r ? '#107c41' : '#f0f0f0');
-      ctx.fillRect(0, canvasY, ROW_HEADER_WIDTH, ROW_HEIGHT);
-      ctx.strokeStyle = '#d8d9db';
-      ctx.strokeRect(0, canvasY, ROW_HEADER_WIDTH, ROW_HEIGHT);
-      ctx.fillStyle = (r === selected.r || isRowSelected) ? '#ffffff' : 'black';
-      ctx.textAlign = 'center';
-      ctx.fillText(r + 1, ROW_HEADER_WIDTH / 2, canvasY + ROW_HEIGHT / 2);
-
-      // Draw cells for this row
-      for (let c = 0; c < TOTAL_COLS; c++) {
-        const x = ROW_HEADER_WIDTH + c * COL_WIDTH;
-        if (x >= CANVAS_WIDTH) break;
-        
-        const key = `${r},${c}`;
-        const isCurrentCell = r === selected.r && c === selected.c;
-        const isInSelection = selection.isRange && 
-          r >= selection.startRow && r <= selection.endRow &&
-          c >= selection.startCol && c <= selection.endCol;
-        const isFirstSelectedCell = selection.isRange && r === selection.startRow && c === selection.startCol;
-        
-        let bgColor = 'white';
-        if (isCurrentCell) {
-          bgColor = '#f1faf1';
-        } else if (isInSelection) {
-          bgColor = isFirstSelectedCell ? '#ffffff' : '#f1faf1';
-        }
-
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(x, canvasY, COL_WIDTH, ROW_HEIGHT);
-        
-        // Cell border
-        ctx.strokeStyle = '#d8d9db';
-        ctx.strokeRect(x + 0.5, canvasY + 0.5, COL_WIDTH - 1, ROW_HEIGHT - 1);
-        ctx.lineWidth = 0.4;
-
-        // Cell content (don't draw if this cell is being edited)
-        const val = cellData[key];
-        if (val && !(isEditing && isCurrentCell)) {
-          ctx.fillStyle = 'black';
-          ctx.textAlign = 'left';
-          const text = String(val).substring(0, 10);
-          ctx.fillText(text, x + 4, canvasY + ROW_HEIGHT / 2);
-        }
+      // Cell content
+      const val = cellData[key];
+      if (val && !(isEditing && isCurrent)) {
+        ctx.fillStyle = 'black';
+        ctx.textAlign = 'left';
+        ctx.fillText(String(val).substring(0, 10), x + 4, y + ROW_HEIGHT / 2);
       }
     }
+  }
 
-    // Draw selection border
-    if (selection.isRange) {
-      const selStartRow = Math.max(selection.startRow, startRow);
-      const selEndRow = Math.min(selection.endRow, endRow - 1);
-      
-      if (selStartRow <= selEndRow) {
-        const selStartY = COL_HEADER_HEIGHT + ((selStartRow - startRow) * ROW_HEIGHT);
-        const selEndY = COL_HEADER_HEIGHT + ((selEndRow - startRow + 1) * ROW_HEIGHT);
-        const selStartX = ROW_HEADER_WIDTH + selection.startCol * COL_WIDTH;
-        const selWidth = (selection.endCol - selection.startCol + 1) * COL_WIDTH;
-        
-        ctx.strokeStyle = '#107c41';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(selStartX, selStartY, selWidth, selEndY - selStartY);
-        ctx.lineWidth = 1;
-      }
-    } else {
-      // Single cell selection
-      if (selected.r >= startRow && selected.r < endRow) {
-        const selY = COL_HEADER_HEIGHT + ((selected.r - startRow) * ROW_HEIGHT);
-        const selX = ROW_HEADER_WIDTH + selected.c * COL_WIDTH;
-        
-        ctx.strokeStyle = '#107c41';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(selX, selY, COL_WIDTH, ROW_HEIGHT);
-        ctx.lineWidth = 1;
-      }
+  // === Selection Border ===
+  if (selection.isRange) {
+    const selStartRow = Math.max(selection.startRow, startRow);
+    const selEndRow = Math.min(selection.endRow, endRow - 1);
+
+    if (selStartRow <= selEndRow) {
+      const selStartY = COL_HEADER_HEIGHT + ((selStartRow - startRow) * ROW_HEIGHT);
+      const selEndY = COL_HEADER_HEIGHT + ((selEndRow - startRow + 1) * ROW_HEIGHT);
+      const selStartX = ROW_HEADER_WIDTH + selection.startCol * COL_WIDTH;
+      const selWidth = (selection.endCol - selection.startCol + 1) * COL_WIDTH;
+
+      ctx.strokeStyle = '#0F7937';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(selStartX, selStartY, selWidth, selEndY - selStartY);
+      ctx.lineWidth = 1.5;
     }
-  }, [cellData, selected, selection, scrollTop, fontFamily, visibleRange, isEditing]);
+  } else {
+    // Single cell border
+    if (selected.r >= startRow && selected.r < endRow) {
+      const selY = COL_HEADER_HEIGHT + ((selected.r - startRow) * ROW_HEIGHT);
+      const selX = ROW_HEADER_WIDTH + selected.c * COL_WIDTH;
+
+      ctx.strokeStyle = '#0F7937';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(selX, selY, COL_WIDTH, ROW_HEIGHT);
+      ctx.lineWidth = 1.5;
+    }
+  }
+}, [cellData, selected, selection, scrollTop, fontFamily, visibleRange, isEditing]);
+
 
   useEffect(() => {
-    drawGrid();
+     window.addEventListener('resize', drawGrid);
+  window.addEventListener('scroll', drawGrid);
+  drawGrid();
+
+  return () => {
+    window.removeEventListener('resize', drawGrid);
+    window.removeEventListener('scroll', drawGrid);
+  };
   }, [drawGrid]);
 
   const addToHistory = useCallback((newData) => {
@@ -224,7 +265,7 @@ export default function GridPage() {
     setTimeout(() => {
       if (cellInputRef.current) {
         cellInputRef.current.focus();
-        cellInputRef.current.select();
+        // cellInputRef.current.select();
       }
     }, 0);
   }, [cellData, visibleRange]);
@@ -298,9 +339,9 @@ export default function GridPage() {
     }
 
     // Check for select all click (top-left corner)
-    if (handleSelectAllClick(x, y, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, setSelection, setSelected, TOTAL_ROWS, TOTAL_COLS)) {
-      return;
-    }
+    // if (handleSelectAllClick(x, y, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, setSelection, setSelected, TOTAL_ROWS, TOTAL_COLS)) {
+    //   return;
+    // }
 
     // Check for column header click
     const colIndex = getColumnFromHeaderClick(x, y, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, COL_WIDTH, TOTAL_COLS);
