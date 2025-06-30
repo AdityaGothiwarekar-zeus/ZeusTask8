@@ -45,6 +45,7 @@ export function calculateStats(cellData, selection) {
   return { count, sum, avg, min, max };
 }
 
+
 /**
  * Computes the visible row range based on scroll position and viewport size for virtualization
  * @param {number} scrollTop - Current vertical scroll position in pixels
@@ -240,6 +241,75 @@ export const handleLoadData = (data, TOTAL_ROWS, TOTAL_COLS) => {
       });
     }
   });
+
+  return newData;
+};
+
+/**
+ * Calculates the visible column range in a scrollable spreadsheet canvas.
+ * Adds a small buffer of extra columns for smoother rendering near edges.
+ *
+ * @param {number} scrollLeft - Current horizontal scroll offset of the canvas.
+ * @param {number} colWidth - Width of a single column in pixels.
+ * @param {number} canvasWidth - Total visible width of the spreadsheet canvas.
+ * @param {number} rowHeaderWidth - Width of the row header (left fixed section).
+ * @param {number} totalCols - Total number of columns in the spreadsheet.
+ * @returns {{ startCol: number, endCol: number }} - Object with the start and end column indexes that are visible.
+ */
+export const getVisibleColRange = (scrollLeft, colWidth, canvasWidth, rowHeaderWidth, totalCols) => {
+  const availableWidth = canvasWidth - rowHeaderWidth;
+  const startCol = Math.floor(scrollLeft / colWidth);
+  const visibleCols = Math.ceil(availableWidth / colWidth) + 2; // +2 buffer for preloading
+
+  const endCol = Math.min(startCol + visibleCols, totalCols);
+
+  return {
+    startCol: Math.max(0, startCol),
+    endCol
+  };
+};
+
+/**
+ * Inserts a new row at the specified index by shifting all rows below it down by one.
+ *
+ * @param {Object} cellData - The current cell data map (keys as "row,col").
+ * @param {number} rowIndex - The index at which to insert the new row.
+ * @returns {Object} - A new cell data map with the row inserted.
+ */
+export const insertRow = (cellData, rowIndex) => {
+  const newData = {};
+
+  for (const key in cellData) {
+    const [r, c] = key.split(',').map(Number);
+    if (r >= rowIndex) {
+      newData[`${r + 1},${c}`] = cellData[key]; // Shift rows down
+    } else {
+      newData[key] = cellData[key];
+    }
+  }
+
+  return newData;
+};
+
+
+/**
+ * Inserts a new column at the specified index by shifting all columns to the right of it.
+ *
+ * @param {Object} cellData - The current cell data map (keys as "row,col").
+ * @param {number} colIndex - The index at which to insert the new column.
+ * @returns {Object} - A new cell data map with the column inserted.
+ */
+export const insertColumn = (cellData, colIndex) => {
+  const newData = {};
+
+  for (const key in cellData) {
+    const [r, c] = key.split(',').map(Number);
+    if (c >= colIndex) {
+      newData[`${r},${c + 1}`] = cellData[key]; // Shift columns right
+    } else {
+      newData[key] = cellData[key];
+    }
+  }
 
   return newData;
 };

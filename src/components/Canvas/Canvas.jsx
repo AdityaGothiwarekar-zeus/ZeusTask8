@@ -3,7 +3,7 @@ import "./Grid.css"
 import StatsPanel from './ExcelFormulaBar';
 import Header from '../Navbar/Header';
 import { getColLetter, calculateStats } from '../../Utils'
-import { getVisibleRowRange } from '../../Utils';
+import { getVisibleRowRange , getVisibleColRange } from '../../Utils';
 import { 
   handleColumnSelection, 
   handleRowSelection, 
@@ -12,6 +12,7 @@ import {
   isColumnInSelection,
   isRowInSelection 
 } from '../../SelectionHelper';
+import { insertRow , insertColumn } from '../../Utils';
 
 const TOTAL_ROWS = 100000;
 const TOTAL_COLS = 500; // A-Z columns
@@ -20,13 +21,14 @@ const ROW_HEIGHT = 24;
 const ROW_HEADER_WIDTH = 40;
 const COL_HEADER_HEIGHT = 24;
 let dpr = window.getdevicePixelRatio || 1;
-const CANVAS_WIDTH = 1715;
-const CANVAS_HEIGHT = 790;
+const CANVAS_WIDTH = 1880;
+const CANVAS_HEIGHT = 850;
 
 export default function GridPage() {
   const canvasRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const cellInputRef = useRef(null);
+  const horizontalScrollRef = useRef(null);
   const [cellData, setCellData] = useState(new Map());
   const [selected, setSelected] = useState({ r: 0, c: 0 });
   const [selection, setSelection] = useState({ 
@@ -37,6 +39,7 @@ export default function GridPage() {
     isRange: false 
   });
   const [scrollTop, setScrollTop] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [fontFamily, setFontFamily] = useState('Arial');
   const [isSelecting, setIsSelecting] = useState(false);
   const [history, setHistory] = useState([{}]);
@@ -85,6 +88,7 @@ const drawGrid = useCallback(() => {
   ctx.lineWidth = 0.4 / dpr; // Always 1px regardless of zoom
 
   const { startRow, endRow } = visibleRange;
+  const { startCol, endCol } = getVisibleColRange(scrollLeft, COL_WIDTH, CANVAS_WIDTH, ROW_HEADER_WIDTH, TOTAL_COLS);
 
   // Draw top-left corner (select all)
   ctx.fillStyle = '#f0f0f0';
@@ -96,8 +100,8 @@ const drawGrid = useCallback(() => {
   ctx.fillStyle = '#f0f0f0';
   ctx.fillRect(ROW_HEADER_WIDTH, 0, CANVAS_WIDTH - ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
 
-  for (let c = 0; c < TOTAL_COLS; c++) {
-    const x = ROW_HEADER_WIDTH + c * COL_WIDTH;
+  for (let c = startCol; c < endCol; c++) {
+    const x = ROW_HEADER_WIDTH + (c - startCol) * COL_WIDTH;
     if (x >= CANVAS_WIDTH) break;
 
     const shouldHighlight = isColumnInSelection(c, selected, selection, TOTAL_ROWS, TOTAL_COLS);
@@ -163,21 +167,38 @@ const drawGrid = useCallback(() => {
     const y = COL_HEADER_HEIGHT + (r - startRow) * ROW_HEIGHT;
     if (y >= CANVAS_HEIGHT) break;
 
-    for (let c = 0; c < TOTAL_COLS; c++) {
-      const x = ROW_HEADER_WIDTH + c * COL_WIDTH;
+    for (let c = startCol; c < endCol; c++) {
+      const x = ROW_HEADER_WIDTH + (c - startCol) * COL_WIDTH;
       if (x >= CANVAS_WIDTH) break;
 
       const key = `${r},${c}`;
       const isCurrent = r === selected.r && c === selected.c;
-      const isInSelection = selection.isRange &&
-        r >= selection.startRow && r <= selection.endRow &&
-        c >= selection.startCol && c <= selection.endCol;
-      const isFirstSelected = isInSelection && r === selection.startRow && c === selection.startCol;
 
-      // Background
+      // Define the selection bounds
+      const minRow = Math.min(selection.startRow, selection.endRow);
+      const maxRow = Math.max(selection.startRow, selection.endRow);
+      const minCol = Math.min(selection.startCol, selection.endCol);
+      const maxCol = Math.max(selection.startCol, selection.endCol);
+
+      // Is this cell part of the selection?
+      const isInSelection = selection.isRange &&
+        r >= minRow && r <= maxRow &&
+        c >= minCol && c <= maxCol;
+
+      // Is this the visual top-left cell of the selection?
+      const isFirstSelected = isInSelection &&
+      r === selection.startRow &&
+      c === selection.startCol;
+      console.log(selection.startRow);
+      console.log(selection.startCol);
+      // Set background
       let bgColor = 'white';
-      if (isCurrent) bgColor = '#f1faf1';
-      else if (isInSelection) bgColor = isFirstSelected ? '#ffffff' : '#f1faf1';
+      if (isInSelection) {
+        bgColor = isFirstSelected ? 'white' : '#f1faf1';
+      } else if (isCurrent) {
+        bgColor = '#f1faf1';
+      }
+
 
       ctx.fillStyle = bgColor;
       ctx.fillRect(x, y, COL_WIDTH, ROW_HEIGHT);
@@ -201,12 +222,14 @@ const drawGrid = useCallback(() => {
   if (selection.isRange) {
     const selStartRow = Math.max(selection.startRow, startRow);
     const selEndRow = Math.min(selection.endRow, endRow - 1);
+    const selStartCol = Math.max(selection.startCol, startCol);
+    const selEndCol = Math.min(selection.endCol, endCol - 1);
 
-    if (selStartRow <= selEndRow) {
+    if (selStartRow <= selEndRow && selStartCol <= selEndCol) {
       const selStartY = COL_HEADER_HEIGHT + ((selStartRow - startRow) * ROW_HEIGHT);
       const selEndY = COL_HEADER_HEIGHT + ((selEndRow - startRow + 1) * ROW_HEIGHT);
-      const selStartX = ROW_HEADER_WIDTH + selection.startCol * COL_WIDTH;
-      const selWidth = (selection.endCol - selection.startCol + 1) * COL_WIDTH;
+      const selStartX = ROW_HEADER_WIDTH + ((selStartCol - startCol) * COL_WIDTH);
+      const selWidth = (selEndCol - selStartCol + 1) * COL_WIDTH;
 
       ctx.strokeStyle = '#0F7937';
       ctx.lineWidth = 2;
@@ -215,9 +238,9 @@ const drawGrid = useCallback(() => {
     }
   } else {
     // Single cell border
-    if (selected.r >= startRow && selected.r < endRow) {
+    if (selected.r >= startRow && selected.r < endRow && selected.c >= startCol && selected.c < endCol) {
       const selY = COL_HEADER_HEIGHT + ((selected.r - startRow) * ROW_HEIGHT);
-      const selX = ROW_HEADER_WIDTH + selected.c * COL_WIDTH;
+      const selX = ROW_HEADER_WIDTH + ((selected.c - startCol) * COL_WIDTH);
 
       ctx.strokeStyle = '#0F7937';
       ctx.lineWidth = 2;
@@ -225,7 +248,7 @@ const drawGrid = useCallback(() => {
       ctx.lineWidth = 1.5;
     }
   }
-}, [cellData, selected, selection, scrollTop, fontFamily, visibleRange, isEditing]);
+}, [cellData, selected, selection, scrollTop, scrollLeft, fontFamily, visibleRange, isEditing]);
 
 
   useEffect(() => {
@@ -246,29 +269,32 @@ const drawGrid = useCallback(() => {
     setHistoryIndex(newHistory.length - 1);
   }, [history, historyIndex]);
 
-  const startEditing = useCallback((row, col) => {
-    const { startRow } = visibleRange;
-    const canvasRect = canvasRef.current?.getBoundingClientRect();
-    if (!canvasRect) return;
+ // startEditing cells
+// Replace your startEditing function with this:
+const startEditing = useCallback((row, col) => {
+  const { startRow } = visibleRange;
+  const { startCol } = getVisibleColRange(scrollLeft, COL_WIDTH, CANVAS_WIDTH, ROW_HEADER_WIDTH, TOTAL_COLS);
+  const canvasRect = canvasRef.current?.getBoundingClientRect();
+  if (!canvasRect) return;
 
-    const x = canvasRect.left + ROW_HEADER_WIDTH + col * COL_WIDTH;
-    const y = canvasRect.top + COL_HEADER_HEIGHT + ((row - startRow) * ROW_HEIGHT);
+  const x = canvasRect.left + ROW_HEADER_WIDTH + ((col - startCol) * COL_WIDTH);
+  const y = canvasRect.top + COL_HEADER_HEIGHT + ((row - startRow) * ROW_HEIGHT);
 
-    const key = `${row},${col}`;
-    const currentValue = cellData[key] || '';
+  const key = `${row},${col}`;
+  const currentValue = cellData[key] || '';
 
-    setEditValue(currentValue);
-    setEditPosition({ x, y });
-    setIsEditing(true);
-    
-    // Focus the input after state update
-    setTimeout(() => {
-      if (cellInputRef.current) {
-        cellInputRef.current.focus();
-        // cellInputRef.current.select();
-      }
-    }, 0);
-  }, [cellData, visibleRange]);
+  setEditValue(currentValue);
+  setEditPosition({ x, y });
+  setIsEditing(true);
+  
+  // Focus the input after state update
+  setTimeout(() => {
+    if (cellInputRef.current) {
+      cellInputRef.current.focus();
+      // cellInputRef.current.select();
+    }
+  }, 0);
+}, [cellData, visibleRange, scrollLeft]);
 
   const finishEditing = useCallback((save = true) => {
     if (!isEditing) return;
@@ -296,26 +322,31 @@ const drawGrid = useCallback(() => {
     }
   }, [isEditing, editValue, selected, cellData, addToHistory]);
 
+
   // Helper function to get cell coordinates from pointer event
-  const getCellFromPointer = useCallback((e) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return null;
+// Replace your getCellFromPointer function with this:
+const getCellFromPointer = useCallback((e) => {
+  const rect = canvasRef.current?.getBoundingClientRect();
+  if (!rect) return null;
 
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
 
-    if (x < ROW_HEADER_WIDTH || y < COL_HEADER_HEIGHT) return null;
+  if (x < ROW_HEADER_WIDTH || y < COL_HEADER_HEIGHT) return null;
 
-    const c = Math.floor((x - ROW_HEADER_WIDTH) / COL_WIDTH);
-    const canvasRowIndex = Math.floor((y - COL_HEADER_HEIGHT) / ROW_HEIGHT);
-    const { startRow } = visibleRange;
-    const r = startRow + canvasRowIndex;
+  const { startCol } = getVisibleColRange(scrollLeft, COL_WIDTH, CANVAS_WIDTH, ROW_HEADER_WIDTH, TOTAL_COLS);
+  const canvasColIndex = Math.floor((x - ROW_HEADER_WIDTH) / COL_WIDTH);
+  const c = startCol + canvasColIndex;
+  
+  const canvasRowIndex = Math.floor((y - COL_HEADER_HEIGHT) / ROW_HEIGHT);
+  const { startRow } = visibleRange;
+  const r = startRow + canvasRowIndex;
 
-    if (c >= 0 && c < TOTAL_COLS && r >= 0 && r < TOTAL_ROWS) {
-      return { r, c };
-    }
-    return null;
-  }, [visibleRange]);
+  if (c >= 0 && c < TOTAL_COLS && r >= 0 && r < TOTAL_ROWS) {
+    return { r, c };
+  }
+  return null;
+}, [visibleRange, scrollLeft]);
 
   // Pointer event handlers
   const handlePointerDown = useCallback((e) => {
@@ -528,29 +559,51 @@ const drawGrid = useCallback(() => {
     });
     
     // Auto-scroll logic
-    if (scrollContainerRef.current) {
-      const rowPosition = newSelected.r * ROW_HEIGHT;
-      const containerHeight = CANVAS_HEIGHT - COL_HEADER_HEIGHT;
-      const visibleStart = scrollTop;
-      const visibleEnd = scrollTop + containerHeight;
-      
-      if (rowPosition < visibleStart) {
-        scrollContainerRef.current.scrollTop = rowPosition;
-      } else if (rowPosition + ROW_HEIGHT > visibleEnd) {
-        scrollContainerRef.current.scrollTop = rowPosition - containerHeight + ROW_HEIGHT;
-      }
-    }
-  };
+if (scrollContainerRef.current && horizontalScrollRef.current) {
+  // Vertical scrolling
+  const rowPosition = newSelected.r * ROW_HEIGHT;
+  const containerHeight = CANVAS_HEIGHT - COL_HEADER_HEIGHT;
+  const visibleStart = scrollTop;
+  const visibleEnd = scrollTop + containerHeight;
+  
+  if (rowPosition < visibleStart) {
+    scrollContainerRef.current.scrollTop = rowPosition;
+  } else if (rowPosition + ROW_HEIGHT > visibleEnd) {
+    scrollContainerRef.current.scrollTop = rowPosition - containerHeight + ROW_HEIGHT;
+  }
+  
+  // Horizontal scrolling
+  const colPosition = newSelected.c * COL_WIDTH;
+  const containerWidth = CANVAS_WIDTH - ROW_HEADER_WIDTH;
+  const visibleLeftStart = scrollLeft;
+  const visibleLeftEnd = scrollLeft + containerWidth;
+  
+  if (colPosition < visibleLeftStart) {
+    horizontalScrollRef.current.scrollLeft = colPosition;
+  } else if (colPosition + COL_WIDTH > visibleLeftEnd) {
+    horizontalScrollRef.current.scrollLeft = colPosition - containerWidth + COL_WIDTH;
+  }
+}
+};
 
-  const handleScroll = (e) => {
-    setScrollTop(e.target.scrollTop);
-    
-    // If editing, close the editor when scrolling
-    if (isEditing) {
-      finishEditing(true);
-    }
-  };
+// Replace your handleScroll function with this:
+const handleVerticalScroll = (e) => {
+  setScrollTop(e.target.scrollTop);
+  
+  // If editing, close the editor when scrolling
+  if (isEditing) {
+    finishEditing(true);
+  }
+};
 
+const handleHorizontalScroll = (e) => {
+  setScrollLeft(e.target.scrollLeft);
+  
+  // If editing, close the editor when scrolling
+  if (isEditing) {
+    finishEditing(true);
+  }
+};
   const handleUndo = () => {
     if (historyIndex > 0) {
       setHistoryIndex(historyIndex - 1);
@@ -693,80 +746,95 @@ const drawGrid = useCallback(() => {
     }
   }, [handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel, handleDoubleClick]);
 
-  const totalScrollHeight = TOTAL_ROWS * ROW_HEIGHT;
+const totalScrollHeight = TOTAL_ROWS * ROW_HEIGHT;
+const totalScrollWidth = TOTAL_COLS * COL_WIDTH;
 
-  return (
-    <div className="spreadsheet-container">
-      <Header 
-        onLoadData={handleLoadData} 
-        onFontChange={setFontFamily}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        canUndo={historyIndex > 0}
-        canRedo={historyIndex < history.length - 1}
-        onSave={handleSave}
-        onCopy={handleCopy}
-        onPaste={handlePaste}
-        onCut={handleCut}
-      />
+return (
+  <div className="spreadsheet-container">
+    <Header 
+      onLoadData={handleLoadData} 
+      onFontChange={setFontFamily}
+      onUndo={handleUndo}
+      onRedo={handleRedo}
+      canUndo={historyIndex > 0}
+      canRedo={historyIndex < history.length - 1}
+      onSave={handleSave}
+      onCopy={handleCopy}
+      onPaste={handlePaste}
+      onCut={handleCut}
+      cellData={cellData}
+      selected={selected}
+      setCellData={setCellData}
+      addToHistory={addToHistory}
+      setSelected={setSelected}
+    />
 
-      <div className="toolbar">
-        <div className="cell-indicator">
-          {getColLetter(selected.c)}{selected.r + 1}
-        </div>
-        <div className="cell-preview">
-          {isEditing ? 'Editing...' : `${cellData[`${selected.r},${selected.c}`] || ''}`}
-        </div>
+    <div className="toolbar">
+      <div className="cell-indicator">
+        {getColLetter(selected.c)}{selected.r + 1}
       </div>
-
-      {stats && <StatsPanel stats={stats} selection={selection} />}
-
-      <div className="canvas-wrapper">
-        <div className="canvas-inner">
-          <canvas
-            ref={canvasRef}
-            className="grid-canvas"
-            tabIndex={0}
-            onKeyDown={handleKeyDown}
-            style={{ touchAction: 'none' }} // Prevents default touch behaviors
-          />
-
-          <div
-            ref={scrollContainerRef}
-            className="vertical-scroll"
-            onScroll={handleScroll}
-          >
-            <div style={{ height: totalScrollHeight, width: 1 }} className="scroll-spacer" />
-          </div>
-
-          {isEditing && (
-            <input
-              ref={cellInputRef}
-              type="text"
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  finishEditing(true);
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  finishEditing(false);
-                }
-              }}
-              onBlur={() => finishEditing(true)}
-              className="cell-input"
-              style={{
-                left: editPosition.x,
-                top: editPosition.y,
-                width: COL_WIDTH - 10,
-                height: ROW_HEIGHT - 2,
-                fontFamily: fontFamily
-              }}
-            />
-          )}
-        </div>
+      <div className="cell-preview">
+        {isEditing ? 'Editing...' : `${cellData[`${selected.r},${selected.c}`] || ''}`}
       </div>
     </div>
-  );
+
+    {stats && <StatsPanel stats={stats} selection={selection} />}
+
+    <div className="canvas-wrapper">
+      <div className="canvas-inner">
+        <canvas
+          ref={canvasRef}
+          className="grid-canvas"
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+          style={{ touchAction: 'none' }} // Prevents default touch behaviors
+        />
+
+        <div
+          ref={scrollContainerRef}
+          className="vertical-scroll"
+          onScroll={handleVerticalScroll}
+        >
+          <div style={{ height: totalScrollHeight, width: 1 }} className="scroll-spacer" />
+        </div>
+
+        <div
+  ref={horizontalScrollRef}
+  className="horizontal-scroll"
+  onScroll={handleHorizontalScroll}
+>
+  <div style={{ width: totalScrollWidth, height: 1 }} className="scroll-spacer" />
+</div>
+
+
+        {isEditing && (
+          <input
+            ref={cellInputRef}
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                finishEditing(true);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                finishEditing(false);
+              }
+            }}
+            onBlur={() => finishEditing(true)}
+            className="cell-input"
+            style={{
+              left: editPosition.x,
+              top: editPosition.y,
+              width: COL_WIDTH - 10,
+              height: ROW_HEIGHT - 2,
+              fontFamily: fontFamily
+            }}
+          />
+        )}
+      </div>
+    </div>
+  </div>
+);
 }

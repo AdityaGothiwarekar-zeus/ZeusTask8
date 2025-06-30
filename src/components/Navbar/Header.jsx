@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import './Header.css';
+import { insertRow , insertColumn } from '../../Utils';
 
 function Header({
   onLoadData,
@@ -12,6 +13,11 @@ function Header({
   onCopy,
   onPaste,
   onCut,
+   cellData,
+  selected,
+  setCellData,
+  addToHistory,
+  setSelected
 }) {
   const fileInputRef = useRef(null);
 
@@ -31,6 +37,25 @@ function Header({
     }
   };
 
+  const handleInsertRow = () => {
+    const newData = insertRow(cellData, selected.r);
+    setCellData(newData);
+    addToHistory(newData);
+    setSelected(prev => ({ ...prev, r: prev.r + 1 }));
+  };
+  
+  const handleInsertColumn = () => {
+    const newData = insertColumn(cellData, selected.c);
+    setCellData(newData);
+    addToHistory(newData);
+    setSelected({
+    type: 'column',
+    c: selected.c + 1, // new inserted column
+    r: null // not selecting a row
+  });
+  };
+  
+
   return (
     <div className="header-component">
       <h2 className="header-title">Advanced Spreadsheet</h2>
@@ -43,6 +68,8 @@ function Header({
       <div className="button-group">
         <button onClick={onUndo} disabled={!canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
         <button onClick={onRedo} disabled={!canRedo} title="Redo (Ctrl+Y)">↷ Redo</button>
+        <button onClick={handleInsertRow}>Insert Row</button>
+        <button onClick={handleInsertColumn}>Insert Column</button>
       </div>
 
       {/* <div className="button-group">
