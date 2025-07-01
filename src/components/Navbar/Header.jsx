@@ -72,11 +72,11 @@ function Header({
         <button onClick={handleInsertColumn}>Insert Column</button>
       </div>
 
-      {/* <div className="button-group">
+      <div className="button-group">
         <button onClick={onCopy} title="Copy (Ctrl+C)">📋 Copy</button>
-        <button onClick={onCut} title="Cut (Ctrl+X)">✂️ Cut</button>
         <button onClick={onPaste} title="Paste (Ctrl+V)">📄 Paste</button>
-      </div> */}
+        {/* <button onClick={onCut} title="Cut (Ctrl+X)">✂️ Cut</button> */}
+      </div>
 
       <input
         ref={fileInputRef}

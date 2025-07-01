@@ -152,3 +152,23 @@ export const isRowInSelection = (row, selected, selection, TOTAL_ROWS, TOTAL_COL
   
   return false;
 };
+export const isEntireColumnSelected = (col, selected, selection, TOTAL_ROWS, TOTAL_COLS) => {
+  if (!selection.isRange) return false;
+  
+  const isEntireColSelected = selection.startRow === 0 && 
+    selection.endRow === TOTAL_ROWS - 1;
+  
+  return isEntireColSelected && col >= selection.startCol && col <= selection.endCol;
+};
+
+/**
+ * Checks if an entire row is selected (spans all columns)
+ */
+export const isEntireRowSelected = (row, selected, selection, TOTAL_ROWS, TOTAL_COLS) => {
+  if (!selection.isRange) return false;
+  
+  const isEntireRowSelected = selection.startCol === 0 &&
+    selection.endCol === TOTAL_COLS - 1;
+  
+  return isEntireRowSelected && row >= selection.startRow && row <= selection.endRow;
+};

@@ -16,7 +16,7 @@ function StatsPanel({ stats, selection }) {
 
   return (
     <div className="formula-bar">
-      <span><strong>Count:</strong> {safeStats.count}</span>
+      {/* <span><strong>Count:</strong> {safeStats.count}</span> */}
       <span><strong>Sum:</strong> {safeStats.sum.toFixed(2)}</span>
       <span><strong>Avg:</strong> {safeStats.avg.toFixed(2)}</span>
       <span><strong>Min:</strong> {safeStats.min}</span>

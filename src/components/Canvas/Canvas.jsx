@@ -10,7 +10,9 @@ import {
   getColumnFromHeaderClick, 
   getRowFromHeaderClick,
   isColumnInSelection,
-  isRowInSelection 
+  isRowInSelection ,
+  isEntireColumnSelected,  // Add this
+  isEntireRowSelected  
 } from '../../SelectionHelper';
 import { insertRow , insertColumn } from '../../Utils';
 
@@ -18,7 +20,7 @@ const TOTAL_ROWS = 100000;
 const TOTAL_COLS = 500; // A-Z columns
 const COL_WIDTH = 80;
 const ROW_HEIGHT = 24;
-const ROW_HEADER_WIDTH = 40;
+const ROW_HEADER_WIDTH = 60;
 const COL_HEADER_HEIGHT = 24;
 let dpr = window.getdevicePixelRatio || 1;
 const CANVAS_WIDTH = 1880;
@@ -96,71 +98,77 @@ const drawGrid = useCallback(() => {
   ctx.strokeStyle = '#d8d9db';
   ctx.strokeRect(0, 0, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
 
-  // === Column Headers ===
-  ctx.fillStyle = '#f0f0f0';
-  ctx.fillRect(ROW_HEADER_WIDTH, 0, CANVAS_WIDTH - ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+// === Column Headers ===
+ctx.fillStyle = '#f0f0f0';
+ctx.fillRect(ROW_HEADER_WIDTH, 0, CANVAS_WIDTH - ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
 
-  for (let c = startCol; c < endCol; c++) {
-    const x = ROW_HEADER_WIDTH + (c - startCol) * COL_WIDTH;
-    if (x >= CANVAS_WIDTH) break;
+for (let c = startCol; c < endCol; c++) {
+  const x = ROW_HEADER_WIDTH + (c - startCol) * COL_WIDTH;
+  if (x >= CANVAS_WIDTH) break;
 
-    const shouldHighlight = isColumnInSelection(c, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+  const shouldHighlight = isColumnInSelection(c, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+  const isEntireColumn = isEntireColumnSelected(c, selected, selection, TOTAL_ROWS, TOTAL_COLS);
 
-    // Background color
-    ctx.fillStyle = shouldHighlight ? '#caead8' : '#f0f0f0';
-    ctx.fillRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
+  // Background color - dark green for entire column, light green for partial selection
+  ctx.fillStyle = shouldHighlight ? (isEntireColumn ? '#0F7937' : '#caead8') : '#f0f0f0';
+  ctx.fillRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
 
-    // Text
-    ctx.fillStyle = shouldHighlight ? '#0F7937' : 'black';
-    ctx.textAlign = 'center';
-    ctx.fillText(getColLetter(c), x + COL_WIDTH / 2, COL_HEADER_HEIGHT / 2);
+  // Text color - white for entire column (dark bg), dark green for partial selection
+  ctx.fillStyle = shouldHighlight ? (isEntireColumn ? 'white' : '#0F7937') : 'black';
+  ctx.textAlign = 'center';
+  ctx.fillText(getColLetter(c), x + COL_WIDTH / 2, COL_HEADER_HEIGHT / 2);
 
-    // Borders
-    ctx.strokeStyle = '#d8d9db';
-    ctx.strokeRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
+  // Borders
+  ctx.strokeStyle = '#d8d9db';
+  ctx.strokeRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
 
-    if (shouldHighlight) {
-      ctx.strokeStyle = '#0F7937'; // dark green
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x, COL_HEADER_HEIGHT - 1);
-      ctx.lineTo(x + COL_WIDTH, COL_HEADER_HEIGHT - 1);
-      ctx.stroke();
-    }
+  if (shouldHighlight) {
+    ctx.strokeStyle = '#0F7937'; // dark green
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, COL_HEADER_HEIGHT - 1);
+    ctx.lineTo(x + COL_WIDTH, COL_HEADER_HEIGHT - 1);
+    ctx.stroke();
+    ctx.lineWidth = 0.4 / dpr; // Reset line width
   }
+}
 
-  // === Row Headers ===
-  ctx.fillStyle = '#f0f0f0';
-  ctx.fillRect(0, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, CANVAS_HEIGHT - COL_HEADER_HEIGHT);
+ // === Row Headers ===
+ctx.fillStyle = '#f0f0f0';
+ctx.fillRect(0, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, CANVAS_HEIGHT - COL_HEADER_HEIGHT);
 
-  for (let r = startRow; r < endRow; r++) {
-    const y = COL_HEADER_HEIGHT + (r - startRow) * ROW_HEIGHT;
-    if (y >= CANVAS_HEIGHT) break;
+for (let r = startRow; r < endRow; r++) {
+  const y = COL_HEADER_HEIGHT + (r - startRow) * ROW_HEIGHT;
+  if (y >= CANVAS_HEIGHT) break;
 
-    const shouldHighlight = isRowInSelection(r, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+  const shouldHighlight = isRowInSelection(r, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+  const isEntireRow = isEntireRowSelected(r, selected, selection, TOTAL_ROWS, TOTAL_COLS);
 
-    // Background
-    ctx.fillStyle = shouldHighlight ? '#caead8' : '#f0f0f0';
-    ctx.fillRect(0, y, ROW_HEADER_WIDTH, ROW_HEIGHT);
+  // Background - dark green for entire row, light green for partial selection
+  ctx.fillStyle = shouldHighlight ? (isEntireRow ? '#0F7937' : '#caead8') : '#f0f0f0';
+  ctx.fillRect(0, y, ROW_HEADER_WIDTH, ROW_HEIGHT);
 
-    // Text
-    ctx.fillStyle = shouldHighlight ? '#0F7937' : 'black';
-    ctx.textAlign = 'center';
-    ctx.fillText(r + 1, ROW_HEADER_WIDTH / 2, y + ROW_HEIGHT / 2);
+  // Text color - white for entire row (dark bg), dark green for partial selection
+  ctx.fillStyle = shouldHighlight ? (isEntireRow ? 'white' : '#0F7937') : 'black';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(r + 1, ROW_HEADER_WIDTH - 5, y + ROW_HEIGHT / 2);
 
-    // Border
-    ctx.strokeStyle = '#d8d9db';
-    ctx.strokeRect(0, y, ROW_HEADER_WIDTH, ROW_HEIGHT);
+  // Border
+  ctx.strokeStyle = '#d8d9db';
+  ctx.strokeRect(0, y, ROW_HEADER_WIDTH, ROW_HEIGHT);
 
-    if (shouldHighlight) {
-      ctx.strokeStyle = '#0F7937'; // dark green
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(ROW_HEADER_WIDTH - 1, y);
-      ctx.lineTo(ROW_HEADER_WIDTH - 1, y + ROW_HEIGHT);
-      ctx.stroke();
-    }
+  if (shouldHighlight) {
+    ctx.strokeStyle = '#0F7937'; // dark green
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ROW_HEADER_WIDTH - 1, y);
+    ctx.lineTo(ROW_HEADER_WIDTH - 1, y + ROW_HEIGHT);
+    ctx.stroke();
+    ctx.lineWidth = 0.4 / dpr; // Reset line width
   }
+}
+
 
   // === Cells ===
   for (let r = startRow; r < endRow; r++) {
@@ -296,31 +304,90 @@ const startEditing = useCallback((row, col) => {
   }, 0);
 }, [cellData, visibleRange, scrollLeft]);
 
-  const finishEditing = useCallback((save = true) => {
-    if (!isEditing) return;
+  // Replace your finishEditing function with this updated version:
+const finishEditing = useCallback((save = true, moveToNext = false) => {
+  if (!isEditing) return;
 
-    if (save) {
-      const key = `${selected.r},${selected.c}`;
-      const newData = { ...cellData };
-      
-      if (editValue.trim() === '') {
-        delete newData[key];
-      } else {
-        newData[key] = editValue;
+  if (save) {
+    const key = `${selected.r},${selected.c}`;
+    const newData = { ...cellData };
+    
+    if (editValue.trim() === '') {
+      delete newData[key];
+    } else {
+      newData[key] = editValue;
+    }
+    
+    setCellData(newData);
+    addToHistory(newData);
+  }
+
+  setIsEditing(false);
+  setEditValue('');
+  
+  // Move to next row if requested and not at the bottom
+  if (moveToNext && selected.r < TOTAL_ROWS - 1) {
+    const newRow = selected.r + 1;
+    const newCol = selected.c;
+    
+    // Update selection immediately
+    setSelected({ r: newRow, c: newCol });
+    setSelection({
+      startRow: newRow,
+      startCol: newCol,
+      endRow: newRow,
+      endCol: newCol,
+      isRange: false
+    });
+    
+    // Handle scrolling
+    requestAnimationFrame(() => {
+      if (scrollContainerRef.current) {
+        const rowPosition = newRow * ROW_HEIGHT;
+        const containerHeight = CANVAS_HEIGHT - COL_HEADER_HEIGHT;
+        const currentScrollTop = scrollContainerRef.current.scrollTop;
+        const visibleEnd = currentScrollTop + containerHeight;
+        
+        // Check if we need to scroll down
+        if (rowPosition + ROW_HEIGHT > visibleEnd) {
+          const newScrollTop = rowPosition - containerHeight + ROW_HEIGHT;
+          scrollContainerRef.current.scrollTop = newScrollTop;
+        }
+        // Check if we need to scroll up (shouldn't happen with Enter, but just in case)
+        else if (rowPosition < currentScrollTop) {
+          scrollContainerRef.current.scrollTop = rowPosition;
+        }
       }
       
-      setCellData(newData);
-      addToHistory(newData);
-    }
+      // Handle horizontal scrolling if needed
+      if (horizontalScrollRef.current) {
+        const colPosition = newCol * COL_WIDTH;
+        const containerWidth = CANVAS_WIDTH - ROW_HEADER_WIDTH;
+        const currentScrollLeft = horizontalScrollRef.current.scrollLeft;
+        const visibleRightEnd = currentScrollLeft + containerWidth;
+        
+        if (colPosition + COL_WIDTH > visibleRightEnd) {
+          horizontalScrollRef.current.scrollLeft = colPosition - containerWidth + COL_WIDTH;
+        } else if (colPosition < currentScrollLeft) {
+          horizontalScrollRef.current.scrollLeft = colPosition;
+        }
+      }
+      
+      // Return focus to canvas
+      if (canvasRef.current) {
+        canvasRef.current.focus();
+      }
+    });
+  } else {
+    // Return focus to canvas immediately if not moving
+    requestAnimationFrame(() => {
+      if (canvasRef.current) {
+        canvasRef.current.focus();
+      }
+    });
+  }
+}, [isEditing, editValue, selected, cellData, addToHistory, TOTAL_ROWS, ROW_HEIGHT, CANVAS_HEIGHT, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, CANVAS_WIDTH, COL_WIDTH]);
 
-    setIsEditing(false);
-    setEditValue('');
-    
-    // Return focus to canvas
-    if (canvasRef.current) {
-      canvasRef.current.focus();
-    }
-  }, [isEditing, editValue, selected, cellData, addToHistory]);
 
 
   // Helper function to get cell coordinates from pointer event
@@ -464,126 +531,163 @@ const getCellFromPointer = useCallback((e) => {
     startEditing(r, c);
   }, [getCellFromPointer, startEditing]);
 
-  const handleKeyDown = (e) => {
-    // If we're editing, handle edit-specific keys
-    if (isEditing) {
-      if (e.key === 'Enter') {
+  // And add a useEffect to handle selection changes and auto-scroll:
+useEffect(() => {
+  if (!isEditing && scrollContainerRef.current && horizontalScrollRef.current) {
+    const rowPosition = selected.r * ROW_HEIGHT;
+    const containerHeight = CANVAS_HEIGHT - COL_HEADER_HEIGHT;
+    const currentScrollTop = scrollContainerRef.current.scrollTop;
+    const visibleEnd = currentScrollTop + containerHeight;
+    
+    // Auto-scroll vertically if needed
+    if (rowPosition + ROW_HEIGHT > visibleEnd) {
+      scrollContainerRef.current.scrollTop = rowPosition - containerHeight + ROW_HEIGHT;
+    } else if (rowPosition < currentScrollTop) {
+      scrollContainerRef.current.scrollTop = rowPosition;
+    }
+    
+    // Auto-scroll horizontally if needed
+    const colPosition = selected.c * COL_WIDTH;
+    const containerWidth = CANVAS_WIDTH - ROW_HEADER_WIDTH;
+    const currentScrollLeft = horizontalScrollRef.current.scrollLeft;
+    const visibleRightEnd = currentScrollLeft + containerWidth;
+    
+    if (colPosition + COL_WIDTH > visibleRightEnd) {
+      horizontalScrollRef.current.scrollLeft = colPosition - containerWidth + COL_WIDTH;
+    } else if (colPosition < currentScrollLeft) {
+      horizontalScrollRef.current.scrollLeft = colPosition;
+    }
+  }
+}, [selected.r, selected.c, isEditing]); // Re-run when selection changes
+const handleKeyDown = (e) => {
+  // If we're editing, handle edit-specific keys
+  if (isEditing) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      finishEditing(true, true); // Save and move to next row
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      finishEditing(false); // Cancel without saving
+    }
+    return;
+  }
+
+  // Handle Ctrl combinations
+  if (e.ctrlKey) {
+    switch (e.key.toLowerCase()) {
+      case 'z':
         e.preventDefault();
-        finishEditing(true);
-      } else if (e.key === 'Escape') {
+        handleUndo();
+        return;
+      case 'y':
         e.preventDefault();
-        finishEditing(false);
+        handleRedo();
+        return;
+      case 'c':
+        e.preventDefault();
+        handleCopy();
+        return;
+      case 'x':
+        e.preventDefault();
+        handleCut();
+        return;
+      case 'v':
+        e.preventDefault();
+        handlePaste();
+        return;
+      case 'a':
+        e.preventDefault();
+        handleSelectAll();
+        return;
+    }
+  }
+
+  let newSelected = { ...selected };
+  
+  switch (e.key) {
+    case 'ArrowUp':
+      e.preventDefault();
+      newSelected.r = Math.max(0, selected.r - 1);
+      break;
+    case 'ArrowDown':
+      e.preventDefault();
+      newSelected.r = Math.min(TOTAL_ROWS - 1, selected.r + 1);
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      newSelected.c = Math.max(0, selected.c - 1);
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      newSelected.c = Math.min(TOTAL_COLS - 1, selected.c + 1);
+      break;
+    case 'Delete':
+    case 'Backspace':
+      e.preventDefault();
+      handleDelete();
+      return;
+    case 'Enter':
+      e.preventDefault();
+      // Move down one row when Enter is pressed (Excel-like behavior)
+      if (selected.r < TOTAL_ROWS - 1) {
+        newSelected.r = selected.r + 1;
+      } else {
+        // If at bottom, just start editing current cell
+        startEditing(selected.r, selected.c);
+        return;
+      }
+      break;
+    case 'F2':
+      e.preventDefault();
+      startEditing(selected.r, selected.c);
+      return;
+    default:
+      // If it's a printable character, start editing
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setEditValue(e.key);
+        startEditing(selected.r, selected.c);
       }
       return;
-    }
-
-    // Handle Ctrl combinations
-    if (e.ctrlKey) {
-      switch (e.key.toLowerCase()) {
-        case 'z':
-          e.preventDefault();
-          handleUndo();
-          return;
-        case 'y':
-          e.preventDefault();
-          handleRedo();
-          return;
-        case 'c':
-          e.preventDefault();
-          handleCopy();
-          return;
-        case 'x':
-          e.preventDefault();
-          handleCut();
-          return;
-        case 'v':
-          e.preventDefault();
-          handlePaste();
-          return;
-        case 'a':
-          e.preventDefault();
-          handleSelectAll();
-          return;
+  }
+  
+  setSelected(newSelected);
+  setSelection({
+    startRow: newSelected.r,
+    startCol: newSelected.c,
+    endRow: newSelected.r,
+    endCol: newSelected.c,
+    isRange: false
+  });
+  
+  // Auto-scroll logic for arrow keys and Enter
+  setTimeout(() => {
+    if (scrollContainerRef.current && horizontalScrollRef.current) {
+      // Vertical scrolling
+      const rowPosition = newSelected.r * ROW_HEIGHT;
+      const containerHeight = CANVAS_HEIGHT - COL_HEADER_HEIGHT;
+      const visibleStart = scrollTop;
+      const visibleEnd = scrollTop + containerHeight;
+      
+      if (rowPosition < visibleStart) {
+        scrollContainerRef.current.scrollTop = rowPosition;
+      } else if (rowPosition + ROW_HEIGHT > visibleEnd) {
+        scrollContainerRef.current.scrollTop = rowPosition - containerHeight + ROW_HEIGHT;
+      }
+      
+      // Horizontal scrolling
+      const colPosition = newSelected.c * COL_WIDTH;
+      const containerWidth = CANVAS_WIDTH - ROW_HEADER_WIDTH;
+      const visibleLeftStart = scrollLeft;
+      const visibleLeftEnd = scrollLeft + containerWidth;
+      
+      if (colPosition < visibleLeftStart) {
+        horizontalScrollRef.current.scrollLeft = colPosition;
+      } else if (colPosition + COL_WIDTH > visibleLeftEnd) {
+        horizontalScrollRef.current.scrollLeft = colPosition - containerWidth + COL_WIDTH;
       }
     }
-
-    let newSelected = { ...selected };
-    
-    switch (e.key) {
-      case 'ArrowUp':
-        e.preventDefault();
-        newSelected.r = Math.max(0, selected.r - 1);
-        break;
-      case 'ArrowDown':
-        e.preventDefault();
-        newSelected.r = Math.min(TOTAL_ROWS - 1, selected.r + 1);
-        break;
-      case 'ArrowLeft':
-        e.preventDefault();
-        newSelected.c = Math.max(0, selected.c - 1);
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        newSelected.c = Math.min(TOTAL_COLS - 1, selected.c + 1);
-        break;
-      case 'Delete':
-      case 'Backspace':
-        e.preventDefault();
-        handleDelete();
-        return;
-      case 'Enter':
-        e.preventDefault();
-        startEditing(selected.r, selected.c);
-        return;
-      case 'F2':
-        e.preventDefault();
-        startEditing(selected.r, selected.c);
-        return;
-      default:
-        // If it's a printable character, start editing
-        if (e.key.length === 1 && !e.ctrlKey && !e.altKey) {
-          e.preventDefault();
-          setEditValue(e.key);
-          startEditing(selected.r, selected.c);
-        }
-        return;
-    }
-    
-    setSelected(newSelected);
-    setSelection({
-      startRow: newSelected.r,
-      startCol: newSelected.c,
-      endRow: newSelected.r,
-      endCol: newSelected.c,
-      isRange: false
-    });
-    
-    // Auto-scroll logic
-if (scrollContainerRef.current && horizontalScrollRef.current) {
-  // Vertical scrolling
-  const rowPosition = newSelected.r * ROW_HEIGHT;
-  const containerHeight = CANVAS_HEIGHT - COL_HEADER_HEIGHT;
-  const visibleStart = scrollTop;
-  const visibleEnd = scrollTop + containerHeight;
-  
-  if (rowPosition < visibleStart) {
-    scrollContainerRef.current.scrollTop = rowPosition;
-  } else if (rowPosition + ROW_HEIGHT > visibleEnd) {
-    scrollContainerRef.current.scrollTop = rowPosition - containerHeight + ROW_HEIGHT;
-  }
-  
-  // Horizontal scrolling
-  const colPosition = newSelected.c * COL_WIDTH;
-  const containerWidth = CANVAS_WIDTH - ROW_HEADER_WIDTH;
-  const visibleLeftStart = scrollLeft;
-  const visibleLeftEnd = scrollLeft + containerWidth;
-  
-  if (colPosition < visibleLeftStart) {
-    horizontalScrollRef.current.scrollLeft = colPosition;
-  } else if (colPosition + COL_WIDTH > visibleLeftEnd) {
-    horizontalScrollRef.current.scrollLeft = colPosition - containerWidth + COL_WIDTH;
-  }
-}
+  }, 0);
 };
 
 // Replace your handleScroll function with this:
@@ -814,14 +918,16 @@ return (
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                finishEditing(true);
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                finishEditing(false);
-              }
-            }}
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.stopPropagation();
+              finishEditing(true, true);
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              finishEditing(false);
+            }
+          }}
             onBlur={() => finishEditing(true)}
             className="cell-input"
             style={{
