@@ -38,23 +38,28 @@ function Header({
   };
 
   const handleInsertRow = () => {
+    const insertAt = selected.r;
     const newData = insertRow(cellData, selected.r);
     setCellData(newData);
     addToHistory(newData);
-    setSelected(prev => ({ ...prev, r: prev.r + 1 }));
+    setSelected(prev => ({ 
+      ...prev, 
+      r: insertAt // Select the newly inserted row
+    }));
   };
   
-  const handleInsertColumn = () => {
-    const newData = insertColumn(cellData, selected.c);
-    setCellData(newData);
-    addToHistory(newData);
-    setSelected({
-    type: 'column',
-    c: selected.c + 1, // new inserted column
-    r: null // not selecting a row
-  });
-  };
-  
+const handleInsertColumn = () => {
+  const insertAt = selected.c;
+  const newData = insertColumn(cellData, selected.c);
+  setCellData(newData);
+  addToHistory(newData);
+
+  setSelected(prev => ({
+      ...prev,
+      c: insertAt // Select the newly inserted (empty) column
+    }));
+};
+
 
   return (
     <div className="header-component">
