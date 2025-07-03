@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import "./Grid.css"
 import StatsPanel from './ExcelFormulaBar';
@@ -5,13 +6,27 @@ import Header from '../Navbar/Header';
 import { getColLetter, calculateStats } from '../../Utils'
 import { getVisibleRowRange , getVisibleColRange } from '../../Utils';
 import { 
+  getColumnResizeHandle, 
+  getRowResizeHandle, 
+  handleColumnResize, 
+  handleRowResize,
+  getVisibleColRangeWithWidths,
+  getVisibleRowRangeWithHeights,
+  getCellFromPointerWithSizes,
+  getTotalScrollWidth,
+  getTotalScrollHeight,
+  RESIZE_HANDLE_WIDTH,
+  MIN_COL_WIDTH,
+  MIN_ROW_HEIGHT 
+} from '../../ResizeHelper';
+import { 
   handleColumnSelection, 
   handleRowSelection, 
   getColumnFromHeaderClick, 
   getRowFromHeaderClick,
   isColumnInSelection,
   isRowInSelection ,
-  isEntireColumnSelected,  // Add this
+  isEntireColumnSelected,
   isEntireRowSelected  
 } from '../../SelectionHelper';
 import { insertRow , insertColumn } from '../../Utils';
@@ -51,7 +66,7 @@ export default function GridPage() {
   // New state for direct cell editing
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
-  const [editPosition, setEditPosition] = useState({ x: 0, y: 0 });
+  const [editPosition, setEditPosition] = useState({ x: 0, y: 0, width: COL_WIDTH, height: ROW_HEIGHT });
 
   // Add state for tracking pointer/touch
   const [pointerDownId, setPointerDownId] = useState(null);
@@ -62,202 +77,334 @@ export default function GridPage() {
   // Add state for auto-scrolling
   const [autoScrollInterval, setAutoScrollInterval] = useState(null);
 
+  //resize helper hooks
+  const [colWidths, setColWidths] = useState(new Map());
+  const [rowHeights, setRowHeights] = useState(new Map());
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizeType, setResizeType] = useState(null); // 'column' or 'row'
+  const [resizeIndex, setResizeIndex] = useState(null);
+  const [resizeStartPos, setResizeStartPos] = useState(0);
+  const [resizeStartSize, setResizeStartSize] = useState(0);
+  
+  // Add state for header selection
+  const [isSelectingHeader, setIsSelectingHeader] = useState(false);
+  const [headerSelectionType, setHeaderSelectionType] = useState(null); // 'column' or 'row'
+  
   // Calculate statistics for current selection
   const stats = calculateStats(cellData, selection);
 
   // Calculate which rows should be visible based on scroll position
   const visibleRange = getVisibleRowRange(scrollTop, ROW_HEIGHT, CANVAS_HEIGHT, COL_HEADER_HEIGHT, TOTAL_ROWS);
 
-  const drawGrid = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+const drawGrid = useCallback(() => {
+  const canvas = canvasRef.current;
+  if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    const dpr = window.devicePixelRatio || 1;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
 
-    // Set canvas physical size (scaled by dpr)
-    canvas.width = CANVAS_WIDTH * dpr;
-    canvas.height = CANVAS_HEIGHT * dpr;
+  // Set canvas physical size (scaled by dpr)
+  canvas.width = CANVAS_WIDTH * dpr;
+  canvas.height = CANVAS_HEIGHT * dpr;
 
-    // Set canvas style size (logical dimensions)
-    canvas.style.width = `${CANVAS_WIDTH}px`;
-    canvas.style.height = `${CANVAS_HEIGHT}px`;
+  // Set canvas style size (logical dimensions)
+  canvas.style.width = `${CANVAS_WIDTH}px`;
+  canvas.style.height = `${CANVAS_HEIGHT}px`;
 
-    // Scale drawing context
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform first
-    ctx.scale(dpr, dpr); // Now all drawing uses logical units
+  // Scale drawing context
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
 
-    // Clear and set font
-    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-    ctx.font = `14px ${fontFamily}`;
-    ctx.textBaseline = 'middle';
-    ctx.lineWidth = 0.4 / dpr; // Always 1px regardless of zoom
+  // Clear and set font
+  ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  ctx.font = `14px ${fontFamily}`;
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 0.4 / dpr;
 
-    const { startRow, endRow } = visibleRange;
-    const { startCol, endCol } = getVisibleColRange(scrollLeft, COL_WIDTH, CANVAS_WIDTH, ROW_HEADER_WIDTH, TOTAL_COLS);
+  // Use the new helper functions for visible ranges
+  const { startRow, endRow } = getVisibleRowRangeWithHeights(scrollTop, CANVAS_HEIGHT, COL_HEADER_HEIGHT, rowHeights, TOTAL_ROWS);
+  const { startCol, endCol } = getVisibleColRangeWithWidths(scrollLeft, CANVAS_WIDTH, ROW_HEADER_WIDTH, colWidths, TOTAL_COLS);
 
-    // Draw top-left corner (select all)
-    ctx.fillStyle = '#f0f0f0';
-    ctx.fillRect(0, 0, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+  // Draw top-left corner (select all)
+  ctx.fillStyle = '#f0f0f0';
+  ctx.fillRect(0, 0, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+  ctx.strokeStyle = '#d8d9db';
+  ctx.strokeRect(0, 0, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+
+  // === Column Headers ===
+  ctx.fillStyle = '#f0f0f0';
+  ctx.fillRect(ROW_HEADER_WIDTH, 0, CANVAS_WIDTH - ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+
+  let currentX = ROW_HEADER_WIDTH;
+  // Calculate starting X position based on ONLY horizontal scroll
+  let scrollOffsetX = 0;
+  for (let c = 0; c < startCol; c++) {
+    scrollOffsetX += colWidths.get(c) || COL_WIDTH;
+  }
+  currentX -= (scrollLeft - scrollOffsetX);
+
+  for (let c = startCol; c < endCol; c++) {
+    const colWidth = colWidths.get(c) || COL_WIDTH;
+    if (currentX >= CANVAS_WIDTH) break;
+
+    const shouldHighlight = isColumnInSelection(c, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+    const isEntireColumn = isEntireColumnSelected(c, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+
+    // Background color
+    ctx.fillStyle = shouldHighlight ? (isEntireColumn ? '#0F7937' : '#caead8') : '#f0f0f0';
+    ctx.fillRect(currentX, 0, colWidth, COL_HEADER_HEIGHT);
+
+    // Text color
+    ctx.fillStyle = shouldHighlight ? (isEntireColumn ? 'white' : '#0F7937') : 'black';
+    ctx.textAlign = 'center';
+    ctx.fillText(getColLetter(c), currentX + colWidth / 2, COL_HEADER_HEIGHT / 2);
+
+    // Borders
     ctx.strokeStyle = '#d8d9db';
-    ctx.strokeRect(0, 0, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+    ctx.strokeRect(currentX, 0, colWidth, COL_HEADER_HEIGHT);
 
-    // === Column Headers ===
-    ctx.fillStyle = '#f0f0f0';
-    ctx.fillRect(ROW_HEADER_WIDTH, 0, CANVAS_WIDTH - ROW_HEADER_WIDTH, COL_HEADER_HEIGHT);
+    if (shouldHighlight) {
+      ctx.strokeStyle = '#0F7937';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(currentX, COL_HEADER_HEIGHT - 1);
+      ctx.lineTo(currentX + colWidth, COL_HEADER_HEIGHT - 1);
+      ctx.stroke();
+      ctx.lineWidth = 0.4 / dpr;
+    }
+
+    currentX += colWidth;
+  }
+
+  // === Row Headers ===
+  ctx.fillStyle = '#f0f0f0';
+  ctx.fillRect(0, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, CANVAS_HEIGHT - COL_HEADER_HEIGHT);
+
+  let currentY = COL_HEADER_HEIGHT;
+  // Calculate starting Y position based on ONLY vertical scroll
+  let scrollOffsetY = 0;
+  for (let r = 0; r < startRow; r++) {
+    scrollOffsetY += rowHeights.get(r) || ROW_HEIGHT;
+  }
+  currentY -= (scrollTop - scrollOffsetY);
+
+  for (let r = startRow; r < endRow; r++) {
+    const rowHeight = rowHeights.get(r) || ROW_HEIGHT;
+    if (currentY >= CANVAS_HEIGHT) break;
+
+    const shouldHighlight = isRowInSelection(r, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+    const isEntireRow = isEntireRowSelected(r, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+
+    // Background
+    ctx.fillStyle = shouldHighlight ? (isEntireRow ? '#0F7937' : '#caead8') : '#f0f0f0';
+    ctx.fillRect(0, currentY, ROW_HEADER_WIDTH, rowHeight);
+
+    // Text color
+    ctx.fillStyle = shouldHighlight ? (isEntireRow ? 'white' : '#0F7937') : 'black';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(r + 1, ROW_HEADER_WIDTH - 5, currentY + rowHeight / 2);
+
+    // Border
+    ctx.strokeStyle = '#d8d9db';
+    ctx.strokeRect(0, currentY, ROW_HEADER_WIDTH, rowHeight);
+
+    if (shouldHighlight) {
+      ctx.strokeStyle = '#0F7937';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ROW_HEADER_WIDTH - 1, currentY);
+      ctx.lineTo(ROW_HEADER_WIDTH - 1, currentY + rowHeight);
+      ctx.stroke();
+      ctx.lineWidth = 0.4 / dpr;
+    }
+
+    currentY += rowHeight;
+  }
+
+  // === Cells ===
+  // IMPORTANT: Clip the cell drawing area to prevent overlap with headers
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, CANVAS_WIDTH - ROW_HEADER_WIDTH, CANVAS_HEIGHT - COL_HEADER_HEIGHT);
+  ctx.clip();
+
+  // Reset currentY for cells (same calculation as row headers)
+  currentY = COL_HEADER_HEIGHT;
+  scrollOffsetY = 0;
+  for (let r = 0; r < startRow; r++) {
+    scrollOffsetY += rowHeights.get(r) || ROW_HEIGHT;
+  }
+  currentY -= (scrollTop - scrollOffsetY);
+
+  for (let r = startRow; r < endRow; r++) {
+    const rowHeight = rowHeights.get(r) || ROW_HEIGHT;
+    if (currentY >= CANVAS_HEIGHT) break;
+
+    // Reset currentX for each row (same calculation as column headers)
+    currentX = ROW_HEADER_WIDTH;
+    scrollOffsetX = 0;
+    for (let c = 0; c < startCol; c++) {
+      scrollOffsetX += colWidths.get(c) || COL_WIDTH;
+    }
+    currentX -= (scrollLeft - scrollOffsetX);
 
     for (let c = startCol; c < endCol; c++) {
-      const x = ROW_HEADER_WIDTH + (c - startCol) * COL_WIDTH;
-      if (x >= CANVAS_WIDTH) break;
+      const colWidth = colWidths.get(c) || COL_WIDTH;
+      if (currentX >= CANVAS_WIDTH) break;
 
-      const shouldHighlight = isColumnInSelection(c, selected, selection, TOTAL_ROWS, TOTAL_COLS);
-      const isEntireColumn = isEntireColumnSelected(c, selected, selection, TOTAL_ROWS, TOTAL_COLS);
+      const key = `${r},${c}`;
+      const isCurrent = r === selected.r && c === selected.c;
 
-      // Background color - dark green for entire column, light green for partial selection
-      ctx.fillStyle = shouldHighlight ? (isEntireColumn ? '#0F7937' : '#caead8') : '#f0f0f0';
-      ctx.fillRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
+      // Define the selection bounds
+      const minRow = Math.min(selection.startRow, selection.endRow);
+      const maxRow = Math.max(selection.startRow, selection.endRow);
+      const minCol = Math.min(selection.startCol, selection.endCol);
+      const maxCol = Math.max(selection.startCol, selection.endCol);
 
-      // Text color - white for entire column (dark bg), dark green for partial selection
-      ctx.fillStyle = shouldHighlight ? (isEntireColumn ? 'white' : '#0F7937') : 'black';
-      ctx.textAlign = 'center';
-      ctx.fillText(getColLetter(c), x + COL_WIDTH / 2, COL_HEADER_HEIGHT / 2);
+      // Is this cell part of the selection?
+      const isInSelection = selection.isRange &&
+        r >= minRow && r <= maxRow &&
+        c >= minCol && c <= maxCol;
 
-      // Borders
-      ctx.strokeStyle = '#d8d9db';
-      ctx.strokeRect(x, 0, COL_WIDTH, COL_HEADER_HEIGHT);
-
-      if (shouldHighlight) {
-        ctx.strokeStyle = '#0F7937'; // dark green
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(x, COL_HEADER_HEIGHT - 1);
-        ctx.lineTo(x + COL_WIDTH, COL_HEADER_HEIGHT - 1);
-        ctx.stroke();
-        ctx.lineWidth = 0.4 / dpr; // Reset line width
-      }
-    }
-
-    // === Row Headers ===
-    ctx.fillStyle = '#f0f0f0';
-    ctx.fillRect(0, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, CANVAS_HEIGHT - COL_HEADER_HEIGHT);
-
-    for (let r = startRow; r < endRow; r++) {
-      const y = COL_HEADER_HEIGHT + (r - startRow) * ROW_HEIGHT;
-      if (y >= CANVAS_HEIGHT) break;
-
-      const shouldHighlight = isRowInSelection(r, selected, selection, TOTAL_ROWS, TOTAL_COLS);
-      const isEntireRow = isEntireRowSelected(r, selected, selection, TOTAL_ROWS, TOTAL_COLS);
-
-      // Background - dark green for entire row, light green for partial selection
-      ctx.fillStyle = shouldHighlight ? (isEntireRow ? '#0F7937' : '#caead8') : '#f0f0f0';
-      ctx.fillRect(0, y, ROW_HEADER_WIDTH, ROW_HEIGHT);
-
-      // Text color - white for entire row (dark bg), dark green for partial selection
-      ctx.fillStyle = shouldHighlight ? (isEntireRow ? 'white' : '#0F7937') : 'black';
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(r + 1, ROW_HEADER_WIDTH - 5, y + ROW_HEIGHT / 2);
-
-      // Border
-      ctx.strokeStyle = '#d8d9db';
-      ctx.strokeRect(0, y, ROW_HEADER_WIDTH, ROW_HEIGHT);
-
-      if (shouldHighlight) {
-        ctx.strokeStyle = '#0F7937'; // dark green
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(ROW_HEADER_WIDTH - 1, y);
-        ctx.lineTo(ROW_HEADER_WIDTH - 1, y + ROW_HEIGHT);
-        ctx.stroke();
-        ctx.lineWidth = 0.4 / dpr; // Reset line width
-      }
-    }
-
-    // === Cells ===
-    for (let r = startRow; r < endRow; r++) {
-      const y = COL_HEADER_HEIGHT + (r - startRow) * ROW_HEIGHT;
-      if (y >= CANVAS_HEIGHT) break;
-
-      for (let c = startCol; c < endCol; c++) {
-        const x = ROW_HEADER_WIDTH + (c - startCol) * COL_WIDTH;
-        if (x >= CANVAS_WIDTH) break;
-
-        const key = `${r},${c}`;
-        const isCurrent = r === selected.r && c === selected.c;
-
-        // Define the selection bounds
-        const minRow = Math.min(selection.startRow, selection.endRow);
-        const maxRow = Math.max(selection.startRow, selection.endRow);
-        const minCol = Math.min(selection.startCol, selection.endCol);
-        const maxCol = Math.max(selection.startCol, selection.endCol);
-
-        // Is this cell part of the selection?
-        const isInSelection = selection.isRange &&
-          r >= minRow && r <= maxRow &&
-          c >= minCol && c <= maxCol;
-
-        // Is this the visual top-left cell of the selection?
-        const isFirstSelected = isInSelection &&
+      // Is this the visual top-left cell of the selection?
+      const isFirstSelected = isInSelection &&
         r === selection.startRow &&
         c === selection.startCol;
 
-        // Set background
-        let bgColor = 'white';
-        if (isInSelection) {
-          bgColor = isFirstSelected ? 'white' : '#f1faf1';
-        } else if (isCurrent) {
-          bgColor = '#f1faf1';
-        }
-
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(x, y, COL_WIDTH, ROW_HEIGHT);
-
-        // Cell border
-        ctx.strokeStyle = '#d8d9db';
-        ctx.strokeRect(x + 0.5, y + 0.5, COL_WIDTH - 1, ROW_HEIGHT - 1);
-        ctx.lineWidth = 0.4;
-
-        // Cell content
-        const val = cellData[key];
-        if (val && !(isEditing && isCurrent)) {
-          ctx.fillStyle = 'black';
-          ctx.textAlign = 'left';
-          ctx.fillText(String(val).substring(0, 10), x + 4, y + ROW_HEIGHT / 2);
-        }
+      // Set background
+      let bgColor = 'white';
+      if (isInSelection) {
+        bgColor = isFirstSelected ? 'white' : '#f1faf1';
+      } else if (isCurrent) {
+        bgColor = '#f1faf1';
       }
+
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(currentX, currentY, colWidth, rowHeight);
+
+      // Cell border
+      ctx.strokeStyle = '#d8d9db';
+      ctx.strokeRect(currentX + 0.5, currentY + 0.5, colWidth - 1, rowHeight - 1);
+      ctx.lineWidth = 0.4;
+
+      // Cell content
+      const val = cellData[key];
+      if (val && !(isEditing && isCurrent)) {
+        ctx.fillStyle = 'black';
+        ctx.textAlign = 'left';
+        ctx.fillText(String(val).substring(0, 10), currentX + 4, currentY + rowHeight / 2);
+      }
+
+      currentX += colWidth;
     }
+    currentY += rowHeight;
+  }
 
-    // === Selection Border ===
-    if (selection.isRange) {
-      const selStartRow = Math.max(selection.startRow, startRow);
-      const selEndRow = Math.min(selection.endRow, endRow - 1);
-      const selStartCol = Math.max(selection.startCol, startCol);
-      const selEndCol = Math.min(selection.endCol, endCol - 1);
+  // Restore the clipping context
+  ctx.restore();
 
-      if (selStartRow <= selEndRow && selStartCol <= selEndCol) {
-        const selStartY = COL_HEADER_HEIGHT + ((selStartRow - startRow) * ROW_HEIGHT);
-        const selEndY = COL_HEADER_HEIGHT + ((selEndRow - startRow + 1) * ROW_HEIGHT);
-        const selStartX = ROW_HEADER_WIDTH + ((selStartCol - startCol) * COL_WIDTH);
-        const selWidth = (selEndCol - selStartCol + 1) * COL_WIDTH;
+  // === Selection Border ===
+  if (selection.isRange) {
+    const selStartRow = Math.max(selection.startRow, startRow);
+    const selEndRow = Math.min(selection.endRow, endRow - 1);
+    const selStartCol = Math.max(selection.startCol, startCol);
+    const selEndCol = Math.min(selection.endCol, endCol - 1);
 
+    if (selStartRow <= selEndRow && selStartCol <= selEndCol) {
+      // Calculate Y positions (vertical scroll affects this)
+      let selStartY = COL_HEADER_HEIGHT;
+      let selEndY = COL_HEADER_HEIGHT;
+      
+      scrollOffsetY = 0;
+      for (let r = 0; r < startRow; r++) {
+        scrollOffsetY += rowHeights.get(r) || ROW_HEIGHT;
+      }
+      selStartY -= (scrollTop - scrollOffsetY);
+
+      for (let r = startRow; r <= selStartRow; r++) {
+        if (r === selStartRow) break;
+        selStartY += rowHeights.get(r) || ROW_HEIGHT;
+      }
+
+      selEndY = selStartY;
+      for (let r = selStartRow; r <= selEndRow; r++) {
+        selEndY += rowHeights.get(r) || ROW_HEIGHT;
+      }
+
+      // Calculate X positions (horizontal scroll affects this)
+      let selStartX = ROW_HEADER_WIDTH;
+      let selWidth = 0;
+
+      scrollOffsetX = 0;
+      for (let c = 0; c < startCol; c++) {
+        scrollOffsetX += colWidths.get(c) || COL_WIDTH;
+      }
+      selStartX -= (scrollLeft - scrollOffsetX);
+
+      for (let c = startCol; c <= selStartCol; c++) {
+        if (c === selStartCol) break;
+        selStartX += colWidths.get(c) || COL_WIDTH;
+      }
+
+      for (let c = selStartCol; c <= selEndCol; c++) {
+        selWidth += colWidths.get(c) || COL_WIDTH;
+      }
+
+      // Only draw selection border if it's within the cell area
+      if (selStartY >= COL_HEADER_HEIGHT && selStartX >= ROW_HEADER_WIDTH) {
         ctx.strokeStyle = '#0F7937';
         ctx.lineWidth = 2;
         ctx.strokeRect(selStartX, selStartY, selWidth, selEndY - selStartY);
         ctx.lineWidth = 1.5;
       }
-    } else {
-      // Single cell border
-      if (selected.r >= startRow && selected.r < endRow && selected.c >= startCol && selected.c < endCol) {
-        const selY = COL_HEADER_HEIGHT + ((selected.r - startRow) * ROW_HEIGHT);
-        const selX = ROW_HEADER_WIDTH + ((selected.c - startCol) * COL_WIDTH);
+    }
+  } else {
+    // Single cell border with custom size
+    if (selected.r >= startRow && selected.r < endRow && selected.c >= startCol && selected.c < endCol) {
+      // Calculate Y position (vertical scroll affects this)
+      let selY = COL_HEADER_HEIGHT;
+      
+      scrollOffsetY = 0;
+      for (let r = 0; r < startRow; r++) {
+        scrollOffsetY += rowHeights.get(r) || ROW_HEIGHT;
+      }
+      selY -= (scrollTop - scrollOffsetY);
 
+      for (let r = startRow; r <= selected.r; r++) {
+        if (r === selected.r) break;
+        selY += rowHeights.get(r) || ROW_HEIGHT;
+      }
+
+      // Calculate X position (horizontal scroll affects this)
+      let selX = ROW_HEADER_WIDTH;
+      
+      scrollOffsetX = 0;
+      for (let c = 0; c < startCol; c++) {
+        scrollOffsetX += colWidths.get(c) || COL_WIDTH;
+      }
+      selX -= (scrollLeft - scrollOffsetX);
+
+      for (let c = startCol; c <= selected.c; c++) {
+        if (c === selected.c) break;
+        selX += colWidths.get(c) || COL_WIDTH;
+      }
+
+      const cellWidth = colWidths.get(selected.c) || COL_WIDTH;
+      const cellHeight = rowHeights.get(selected.r) || ROW_HEIGHT;
+
+      // Only draw selection border if it's within the cell area
+      if (selY >= COL_HEADER_HEIGHT && selX >= ROW_HEADER_WIDTH) {
         ctx.strokeStyle = '#0F7937';
         ctx.lineWidth = 2;
-        ctx.strokeRect(selX, selY, COL_WIDTH, ROW_HEIGHT);
+        ctx.strokeRect(selX, selY, cellWidth, cellHeight);
         ctx.lineWidth = 1.5;
       }
     }
-  }, [cellData, selected, selection, scrollTop, scrollLeft, fontFamily, visibleRange, isEditing]);
+  }
+}, [cellData, selected, selection, scrollTop, scrollLeft, fontFamily, colWidths, rowHeights, isEditing]);
+
+  // ... keep existing code (useEffect, addToHistory, startEditing, finishEditing functions)
 
   useEffect(() => {
     window.addEventListener('resize', drawGrid);
@@ -279,28 +426,55 @@ export default function GridPage() {
 
   // startEditing cells
   const startEditing = useCallback((row, col) => {
-    const { startRow } = visibleRange;
-    const { startCol } = getVisibleColRange(scrollLeft, COL_WIDTH, CANVAS_WIDTH, ROW_HEADER_WIDTH, TOTAL_COLS);
-    const canvasRect = canvasRef.current?.getBoundingClientRect();
-    if (!canvasRect) return;
+  const canvasRect = canvasRef.current?.getBoundingClientRect();
+  if (!canvasRect) return;
 
-    const x = canvasRect.left + ROW_HEADER_WIDTH + ((col - startCol) * COL_WIDTH);
-    const y = canvasRect.top + COL_HEADER_HEIGHT + ((row - startRow) * ROW_HEIGHT);
+  // Use the helper functions to get visible ranges with custom sizes
+  const { startRow } = getVisibleRowRangeWithHeights(scrollTop, CANVAS_HEIGHT, COL_HEADER_HEIGHT, rowHeights, TOTAL_ROWS);
+  const { startCol } = getVisibleColRangeWithWidths(scrollLeft, CANVAS_WIDTH, ROW_HEADER_WIDTH, colWidths, TOTAL_COLS);
 
-    const key = `${row},${col}`;
-    const currentValue = cellData[key] || '';
+  // Calculate X position accounting for custom column widths
+  let x = canvasRect.left + ROW_HEADER_WIDTH;
+  let scrollOffsetX = 0;
+  for (let c = 0; c < startCol; c++) {
+    scrollOffsetX += colWidths.get(c) || COL_WIDTH;
+  }
+  x -= (scrollLeft - scrollOffsetX);
 
-    setEditValue(currentValue);
-    setEditPosition({ x, y });
-    setIsEditing(true);
-    
-    // Focus the input after state update
-    setTimeout(() => {
-      if (cellInputRef.current) {
-        cellInputRef.current.focus();
-      }
-    }, 0);
-  }, [cellData, visibleRange, scrollLeft]);
+  for (let c = startCol; c < col; c++) {
+    x += colWidths.get(c) || COL_WIDTH;
+  }
+
+  // Calculate Y position accounting for custom row heights
+  let y = canvasRect.top + COL_HEADER_HEIGHT;
+  let scrollOffsetY = 0;
+  for (let r = 0; r < startRow; r++) {
+    scrollOffsetY += rowHeights.get(r) || ROW_HEIGHT;
+  }
+  y -= (scrollTop - scrollOffsetY);
+
+  for (let r = startRow; r < row; r++) {
+    y += rowHeights.get(r) || ROW_HEIGHT;
+  }
+
+  const key = `${row},${col}`;
+  const currentValue = cellData[key] || '';
+
+  // Get the actual cell dimensions
+  const cellWidth = colWidths.get(col) || COL_WIDTH;
+  const cellHeight = rowHeights.get(row) || ROW_HEIGHT;
+
+  setEditValue(currentValue);
+  setEditPosition({ x, y, width: cellWidth, height: cellHeight });
+  setIsEditing(true);
+  
+  // Focus the input after state update
+  setTimeout(() => {
+    if (cellInputRef.current) {
+      cellInputRef.current.focus();
+    }
+  }, 0);
+}, [cellData, scrollTop, scrollLeft, colWidths, rowHeights]);
 
   const finishEditing = useCallback((save = true, moveToNext = false) => {
     if (!isEditing) return;
@@ -386,245 +560,454 @@ export default function GridPage() {
   }, [isEditing, editValue, selected, cellData, addToHistory, TOTAL_ROWS, ROW_HEIGHT, CANVAS_HEIGHT, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, CANVAS_WIDTH, COL_WIDTH]);
 
   // Helper function to get cell coordinates from pointer event
-  const getCellFromPointer = useCallback((e) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return null;
+const getCellFromPointer = useCallback((e) => {
+  const rect = canvasRef.current?.getBoundingClientRect();
+  if (!rect) return null;
 
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
 
-    if (x < ROW_HEADER_WIDTH || y < COL_HEADER_HEIGHT) return null;
+  if (x < ROW_HEADER_WIDTH || y < COL_HEADER_HEIGHT) return null;
 
-    const { startCol } = getVisibleColRange(scrollLeft, COL_WIDTH, CANVAS_WIDTH, ROW_HEADER_WIDTH, TOTAL_COLS);
-    const canvasColIndex = Math.floor((x - ROW_HEADER_WIDTH) / COL_WIDTH);
-    const c = startCol + canvasColIndex;
-    
-    const canvasRowIndex = Math.floor((y - COL_HEADER_HEIGHT) / ROW_HEIGHT);
-    const { startRow } = visibleRange;
-    const r = startRow + canvasRowIndex;
+  // Calculate column using custom widths
+  const { startCol } = getVisibleColRangeWithWidths(scrollLeft, CANVAS_WIDTH, ROW_HEADER_WIDTH, colWidths, TOTAL_COLS);
+  
+  let currentX = ROW_HEADER_WIDTH;
+  let scrollOffsetX = 0;
+  for (let c = 0; c < startCol; c++) {
+    scrollOffsetX += colWidths.get(c) || COL_WIDTH;
+  }
+  currentX -= (scrollLeft - scrollOffsetX);
 
-    if (c >= 0 && c < TOTAL_COLS && r >= 0 && r < TOTAL_ROWS) {
-      return { r, c };
+  let c = -1;
+  for (let col = startCol; col < TOTAL_COLS; col++) {
+    const colWidth = colWidths.get(col) || COL_WIDTH;
+    if (x >= currentX && x < currentX + colWidth) {
+      c = col;
+      break;
     }
-    return null;
-  }, [visibleRange, scrollLeft]);
+    currentX += colWidth;
+    if (currentX > CANVAS_WIDTH) break;
+  }
 
-  // Pointer event handlers
+  // Calculate row using custom heights
+  const { startRow } = getVisibleRowRangeWithHeights(scrollTop, CANVAS_HEIGHT, COL_HEADER_HEIGHT, rowHeights, TOTAL_ROWS);
+  
+  let currentY = COL_HEADER_HEIGHT;
+  let scrollOffsetY = 0;
+  for (let r = 0; r < startRow; r++) {
+    scrollOffsetY += rowHeights.get(r) || ROW_HEIGHT;
+  }
+  currentY -= (scrollTop - scrollOffsetY);
+
+  let r = -1;
+  for (let row = startRow; row < TOTAL_ROWS; row++) {
+    const rowHeight = rowHeights.get(row) || ROW_HEIGHT;
+    if (y >= currentY && y < currentY + rowHeight) {
+      r = row;
+      break;
+    }
+    currentY += rowHeight;
+    if (currentY > CANVAS_HEIGHT) break;
+  }
+
+  if (c >= 0 && c < TOTAL_COLS && r >= 0 && r < TOTAL_ROWS) {
+    return { r, c };
+  }
+  return null;
+}, [scrollLeft, scrollTop, colWidths, rowHeights]);
+
   const handlePointerDown = useCallback((e) => {
-    console.log("pointer down", e.pointerId);
-    
-    // Prevent default to avoid text selection and other browser behaviors
-    e.preventDefault();
-    
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
+  console.log("pointer down", e.pointerId);
+  
+  e.preventDefault();
+  
+  const rect = canvasRef.current?.getBoundingClientRect();
+  if (!rect) return;
 
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
 
-    // Store shift key state
-    setShiftKey(e.shiftKey);
+  // Check for resize handles first
+  const colResizeHandle = getColumnResizeHandle(x, y, scrollLeft, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, colWidths, TOTAL_COLS);
+  const rowResizeHandle = getRowResizeHandle(x, y, scrollTop, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, rowHeights, TOTAL_ROWS);
 
+  if (colResizeHandle !== null) {
     // If we're currently editing, finish editing first
     if (isEditing) {
       finishEditing(true);
     }
-
-    // Check for column header click
-    const colIndex = getColumnFromHeaderClick(x, y, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, COL_WIDTH, TOTAL_COLS);
-    if (colIndex !== null) {
-      handleColumnSelection(colIndex, selection, setSelection, setSelected, TOTAL_ROWS);
-      return;
-    }
-
-    // Check for row header click
-    const rowIndex = getRowFromHeaderClick(x, y, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, ROW_HEIGHT, visibleRange.startRow, TOTAL_ROWS);
-    if (rowIndex !== null) {
-      handleRowSelection(rowIndex, selection, setSelection, setSelected, TOTAL_COLS);
-      return;
-    }
-
-    // Regular cell selection
-    const cell = getCellFromPointer(e);
-    if (!cell) return;
-
-    const { r, c } = cell;
-
-    // Capture the pointer
+    
+    setIsResizing(true);
+    setResizeType('column');
+    setResizeIndex(colResizeHandle);
+    setResizeStartPos(x);
+    setResizeStartSize(colWidths.get(colResizeHandle) || COL_WIDTH);
     if (canvasRef.current) {
       canvasRef.current.setPointerCapture(e.pointerId);
     }
-
     setPointerDownId(e.pointerId);
-    setStartSelection({ r, c });
-    setSelected({ r, c });
-    setSelection({ 
-      startRow: r, 
-      startCol: c, 
-      endRow: r, 
-      endCol: c, 
-      isRange: false 
-    });
-    setIsSelecting(true);
-  }, [getCellFromPointer, isEditing, finishEditing, selection, visibleRange]);
+    return;
+  }
 
-  const handlePointerMove = useCallback((e) => {
-    if (!isSelecting || isEditing || e.pointerId !== pointerDownId || !startSelection) return;
+  if (rowResizeHandle !== null) {
+    // If we're currently editing, finish editing first
+    if (isEditing) {
+      finishEditing(true);
+    }
     
+    setIsResizing(true);
+    setResizeType('row');
+    setResizeIndex(rowResizeHandle);
+    setResizeStartPos(y);
+    setResizeStartSize(rowHeights.get(rowResizeHandle) || ROW_HEIGHT);
+    if (canvasRef.current) {
+      canvasRef.current.setPointerCapture(e.pointerId);
+    }
+    setPointerDownId(e.pointerId);
+    return;
+  }
+
+  // Store shift key state
+  setShiftKey(e.shiftKey);
+
+  // If we're currently editing, finish editing first
+  if (isEditing) {
+    finishEditing(true);
+  }
+
+  // Check for column header click
+  const colIndex = getColumnFromHeaderClick(x, y, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, scrollLeft, colWidths, TOTAL_COLS, CANVAS_WIDTH);
+  if (colIndex !== null) {
+    handleColumnSelection(colIndex, selection, setSelection, setSelected, TOTAL_ROWS);
+    setIsSelectingHeader(true);
+    setHeaderSelectionType('column');
+    if (canvasRef.current) {
+      canvasRef.current.setPointerCapture(e.pointerId);
+    }
+    setPointerDownId(e.pointerId);
+    return;
+  }
+
+  // Check for row header click
+  const rowIndex = getRowFromHeaderClick(x, y, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, scrollTop, rowHeights, TOTAL_ROWS, CANVAS_HEIGHT);
+  if (rowIndex !== null) {
+    handleRowSelection(rowIndex, selection, setSelection, setSelected, TOTAL_COLS);
+    setIsSelectingHeader(true);
+    setHeaderSelectionType('row');
+    if (canvasRef.current) {
+      canvasRef.current.setPointerCapture(e.pointerId);
+    }
+    setPointerDownId(e.pointerId);
+    return;
+  }
+
+  // Regular cell selection
+  const cell = getCellFromPointer(e);
+  if (!cell) return;
+
+  const { r, c } = cell;
+
+  // Capture the pointer
+  if (canvasRef.current) {
+    canvasRef.current.setPointerCapture(e.pointerId);
+  }
+
+  setPointerDownId(e.pointerId);
+  setStartSelection({ r, c });
+  setSelected({ r, c });
+  setSelection({ 
+    startRow: r, 
+    startCol: c, 
+    endRow: r, 
+    endCol: c, 
+    isRange: false 
+  });
+  setIsSelecting(true);
+}, [getCellFromPointer, isEditing, finishEditing, selection, scrollLeft, scrollTop, colWidths, rowHeights]);
+
+  // Add this new function for checking resize cursors
+const updateCursor = useCallback((e) => {
+  if (isResizing) return;
+
+  const rect = canvasRef.current?.getBoundingClientRect();
+  if (!rect) return;
+
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  const colResizeHandle = getColumnResizeHandle(x, y, scrollLeft, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, colWidths, TOTAL_COLS);
+  const rowResizeHandle = getRowResizeHandle(x, y, scrollTop, COL_HEADER_HEIGHT, ROW_HEADER_WIDTH, rowHeights, TOTAL_ROWS);
+
+  if (colResizeHandle !== null) {
+    canvasRef.current.style.cursor = 'col-resize';
+  } else if (rowResizeHandle !== null) {
+    canvasRef.current.style.cursor = 'row-resize';
+  } else {
+    canvasRef.current.style.cursor = 'default';
+  }
+}, [scrollLeft, scrollTop, colWidths, rowHeights, isResizing]);
+
+ const handlePointerMove = useCallback((e) => {
+  // Handle cursor updates when not selecting
+  if (!isSelecting && !isResizing && !isSelectingHeader) {
+    updateCursor(e);
+  }
+
+  // Handle resizing
+  if (isResizing && e.pointerId === pointerDownId) {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
 
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    // Calculate scroll values
-    const totalScrollHeight = TOTAL_ROWS * ROW_HEIGHT;
-    const totalScrollWidth = TOTAL_COLS * COL_WIDTH;
-
-    // Auto-scroll logic
-    const scrollSpeed = 20; // pixels per scroll
-    const scrollZone = 50; // pixels from edge to trigger scroll
-    let shouldScrollLeft = false;
-    let shouldScrollRight = false;
-    let shouldScrollUp = false;
-    let shouldScrollDown = false;
-
-    // Check horizontal scroll zones
-    if (x < ROW_HEADER_WIDTH + scrollZone && x > ROW_HEADER_WIDTH) {
-      shouldScrollLeft = true;
-    } else if (x > CANVAS_WIDTH - scrollZone) {
-      shouldScrollRight = true;
+    if (resizeType === 'column') {
+      const delta = x - resizeStartPos;
+      const newWidth = resizeStartSize + delta;
+      handleColumnResize(resizeIndex, newWidth, colWidths, setColWidths, addToHistory);
+    } else if (resizeType === 'row') {
+      const delta = y - resizeStartPos;
+      const newHeight = resizeStartSize + delta;
+      handleRowResize(resizeIndex, newHeight, rowHeights, setRowHeights, addToHistory);
     }
+    return;
+  }
 
-    // Check vertical scroll zones
-    if (y < COL_HEADER_HEIGHT + scrollZone && y > COL_HEADER_HEIGHT) {
-      shouldScrollUp = true;
-    } else if (y > CANVAS_HEIGHT - scrollZone) {
-      shouldScrollDown = true;
+  // Handle header selection (extending column/row selection)
+  if (isSelectingHeader && e.pointerId === pointerDownId) {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (headerSelectionType === 'column') {
+      const colIndex = getColumnFromHeaderClick(x, y, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, scrollLeft, colWidths, TOTAL_COLS, CANVAS_WIDTH);
+      if (colIndex !== null) {
+        const currentStartCol = selection.startCol;
+        const minCol = Math.min(currentStartCol, colIndex);
+        const maxCol = Math.max(currentStartCol, colIndex);
+        
+        setSelection({
+          startRow: 0,
+          startCol: minCol,
+          endRow: TOTAL_ROWS - 1,
+          endCol: maxCol,
+          isRange: true
+        });
+      }
+    } else if (headerSelectionType === 'row') {
+      const rowIndex = getRowFromHeaderClick(x, y, ROW_HEADER_WIDTH, COL_HEADER_HEIGHT, scrollTop, rowHeights, TOTAL_ROWS, CANVAS_HEIGHT);
+      if (rowIndex !== null) {
+        const currentStartRow = selection.startRow;
+        const minRow = Math.min(currentStartRow, rowIndex);
+        const maxRow = Math.max(currentStartRow, rowIndex);
+        
+        setSelection({
+          startRow: minRow,
+          startCol: 0,
+          endRow: maxRow,
+          endCol: TOTAL_COLS - 1,
+          isRange: true
+        });
+      }
     }
+    return;
+  }
 
-    // Clear existing auto-scroll
+  // Rest of existing cell selection logic
+  if (!isSelecting || e.pointerId !== pointerDownId || !startSelection) return;
+  
+  const rect = canvasRef.current?.getBoundingClientRect();
+  if (!rect) return;
+
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  // Calculate scroll values using custom sizes
+  const totalScrollHeight = getTotalScrollHeight(rowHeights, TOTAL_ROWS);
+  const totalScrollWidth = getTotalScrollWidth(colWidths, TOTAL_COLS);
+
+  // Auto-scroll logic (same as before)
+  const scrollSpeed = 20;
+  const scrollZone = 50;
+  let shouldScrollLeft = false;
+  let shouldScrollRight = false;
+  let shouldScrollUp = false;
+  let shouldScrollDown = false;
+
+  if (x < ROW_HEADER_WIDTH + scrollZone && x > ROW_HEADER_WIDTH) {
+    shouldScrollLeft = true;
+  } else if (x > CANVAS_WIDTH - scrollZone) {
+    shouldScrollRight = true;
+  }
+
+  if (y < COL_HEADER_HEIGHT + scrollZone && y > COL_HEADER_HEIGHT) {
+    shouldScrollUp = true;
+  } else if (y > CANVAS_HEIGHT - scrollZone) {
+    shouldScrollDown = true;
+  }
+
+  // Clear existing auto-scroll
+  if (autoScrollInterval) {
+    clearInterval(autoScrollInterval);
+    setAutoScrollInterval(null);
+  }
+
+  // Start auto-scrolling if needed
+  if (shouldScrollLeft || shouldScrollRight || shouldScrollUp || shouldScrollDown) {
+    const interval = setInterval(() => {
+      if (shouldScrollLeft && horizontalScrollRef.current) {
+        const newScrollLeft = Math.max(0, horizontalScrollRef.current.scrollLeft - scrollSpeed);
+        horizontalScrollRef.current.scrollLeft = newScrollLeft;
+        setScrollLeft(newScrollLeft);
+      }
+      if (shouldScrollRight && horizontalScrollRef.current) {
+        const maxScrollLeft = totalScrollWidth - (CANVAS_WIDTH - ROW_HEADER_WIDTH);
+        const newScrollLeft = Math.min(maxScrollLeft, horizontalScrollRef.current.scrollLeft + scrollSpeed);
+        horizontalScrollRef.current.scrollLeft = newScrollLeft;
+        setScrollLeft(newScrollLeft);
+      }
+      if (shouldScrollUp && scrollContainerRef.current) {
+        const newScrollTop = Math.max(0, scrollContainerRef.current.scrollTop - scrollSpeed);
+        scrollContainerRef.current.scrollTop = newScrollTop;
+        setScrollTop(newScrollTop);
+      }
+      if (shouldScrollDown && scrollContainerRef.current) {
+        const maxScrollTop = totalScrollHeight - (CANVAS_HEIGHT - COL_HEADER_HEIGHT);
+        const newScrollTop = Math.min(maxScrollTop, scrollContainerRef.current.scrollTop + scrollSpeed);
+        scrollContainerRef.current.scrollTop = newScrollTop;
+        setScrollTop(newScrollTop);
+      }
+    }, 30);
+    
+    setAutoScrollInterval(interval);
+  }
+
+  // Get cell coordinates
+  const cell = getCellFromPointer(e);
+  if (!cell) {
+    if (shouldScrollLeft || shouldScrollRight || shouldScrollUp || shouldScrollDown) {
+      const { startCol } = getVisibleColRangeWithWidths(scrollLeft, CANVAS_WIDTH, ROW_HEADER_WIDTH, colWidths, TOTAL_COLS);
+      const { startRow } = getVisibleRowRangeWithHeights(scrollTop, CANVAS_HEIGHT, COL_HEADER_HEIGHT, rowHeights, TOTAL_ROWS);
+      
+      let targetCol = startCol;
+      let targetRow = startRow;
+      
+      if (shouldScrollLeft) {
+        targetCol = Math.max(0, startCol - 1);
+      } else if (shouldScrollRight) {
+        // Calculate how many columns fit in the visible area
+        let visibleCols = 0;
+        let currentWidth = 0;
+        const maxWidth = CANVAS_WIDTH - ROW_HEADER_WIDTH;
+        for (let c = startCol; c < TOTAL_COLS && currentWidth < maxWidth; c++) {
+          currentWidth += colWidths.get(c) || COL_WIDTH;
+          visibleCols++;
+        }
+        targetCol = Math.min(TOTAL_COLS - 1, startCol + visibleCols);
+      }
+      
+      if (shouldScrollUp) {
+        targetRow = Math.max(0, startRow - 1);
+      } else if (shouldScrollDown) {
+        // Calculate how many rows fit in the visible area
+        let visibleRows = 0;
+        let currentHeight = 0;
+        const maxHeight = CANVAS_HEIGHT - COL_HEADER_HEIGHT;
+        for (let r = startRow; r < TOTAL_ROWS && currentHeight < maxHeight; r++) {
+          currentHeight += rowHeights.get(r) || ROW_HEIGHT;
+          visibleRows++;
+        }
+        targetRow = Math.min(TOTAL_ROWS - 1, startRow + visibleRows);
+      }
+      
+      const newSelection = {
+        startRow: Math.min(startSelection.r, targetRow),
+        endRow: Math.max(startSelection.r, targetRow),
+        startCol: Math.min(startSelection.c, targetCol),
+        endCol: Math.max(startSelection.c, targetCol),
+        isRange: startSelection.r !== targetRow || startSelection.c !== targetCol
+      };
+      setSelection(newSelection);
+    }
+    return;
+  }
+
+  const { r, c } = cell;
+
+  // Update selection
+  const newSelection = {
+    startRow: Math.min(startSelection.r, r),
+    endRow: Math.max(startSelection.r, r),
+    startCol: Math.min(startSelection.c, c),
+    endCol: Math.max(startSelection.c, c),
+    isRange: startSelection.r !== r || startSelection.c !== c
+  };
+  setSelection(newSelection);
+}, [isSelecting, isResizing, isSelectingHeader, pointerDownId, startSelection, getCellFromPointer, autoScrollInterval, scrollLeft, scrollTop, colWidths, rowHeights, updateCursor, resizeType, resizeIndex, resizeStartPos, resizeStartSize, addToHistory, selection, headerSelectionType]);
+
+const handlePointerUp = useCallback((e) => {
+  if (e.pointerId === pointerDownId) {
+    console.log("pointer up", e.pointerId);
+    
+    if (isResizing) {
+      setIsResizing(false);
+      setResizeType(null);
+      setResizeIndex(null);
+      setResizeStartPos(0);
+      setResizeStartSize(0);
+    }
+    
+    setIsSelecting(false);
+    setIsSelectingHeader(false);
+    setHeaderSelectionType(null);
+    setPointerDownId(null);
+    setStartSelection(null);
+    setShiftKey(false);
+    
+    // Clear auto-scroll interval
     if (autoScrollInterval) {
       clearInterval(autoScrollInterval);
       setAutoScrollInterval(null);
     }
-
-    // Start auto-scrolling if needed
-    if (shouldScrollLeft || shouldScrollRight || shouldScrollUp || shouldScrollDown) {
-      const interval = setInterval(() => {
-        if (shouldScrollLeft && horizontalScrollRef.current) {
-          const newScrollLeft = Math.max(0, horizontalScrollRef.current.scrollLeft - scrollSpeed);
-          horizontalScrollRef.current.scrollLeft = newScrollLeft;
-          setScrollLeft(newScrollLeft);
-        }
-        if (shouldScrollRight && horizontalScrollRef.current) {
-          const maxScrollLeft = totalScrollWidth - (CANVAS_WIDTH - ROW_HEADER_WIDTH);
-          const newScrollLeft = Math.min(maxScrollLeft, horizontalScrollRef.current.scrollLeft + scrollSpeed);
-          horizontalScrollRef.current.scrollLeft = newScrollLeft;
-          setScrollLeft(newScrollLeft);
-        }
-        if (shouldScrollUp && scrollContainerRef.current) {
-          const newScrollTop = Math.max(0, scrollContainerRef.current.scrollTop - scrollSpeed);
-          scrollContainerRef.current.scrollTop = newScrollTop;
-          setScrollTop(newScrollTop);
-        }
-        if (shouldScrollDown && scrollContainerRef.current) {
-          const maxScrollTop = totalScrollHeight - (CANVAS_HEIGHT - COL_HEADER_HEIGHT);
-          const newScrollTop = Math.min(maxScrollTop, scrollContainerRef.current.scrollTop + scrollSpeed);
-          scrollContainerRef.current.scrollTop = newScrollTop;
-          setScrollTop(newScrollTop);
-        }
-      }, 30); // Scroll every 50ms
-      
-      setAutoScrollInterval(interval);
+    
+    // Release pointer capture
+    if (canvasRef.current) {
+      canvasRef.current.releasePointerCapture(e.pointerId);
     }
+  }
+}, [pointerDownId, autoScrollInterval, isResizing, isSelectingHeader]);
 
-    // Get cell coordinates
-    const cell = getCellFromPointer(e);
-    if (!cell) {
-      // If pointer is outside cell area but we're scrolling, 
-      // calculate the cell based on current position
-      if (shouldScrollLeft || shouldScrollRight || shouldScrollUp || shouldScrollDown) {
-        const { startCol } = getVisibleColRange(scrollLeft, COL_WIDTH, CANVAS_WIDTH, ROW_HEADER_WIDTH, TOTAL_COLS);
-        const { startRow } = visibleRange;
-        
-        let targetCol = startCol;
-        let targetRow = startRow;
-        
-        if (shouldScrollLeft) {
-          targetCol = Math.max(0, startCol - 1);
-        } else if (shouldScrollRight) {
-          targetCol = Math.min(TOTAL_COLS - 1, startCol + Math.floor((CANVAS_WIDTH - ROW_HEADER_WIDTH) / COL_WIDTH));
-        }
-        
-        if (shouldScrollUp) {
-          targetRow = Math.max(0, startRow - 1);
-        } else if (shouldScrollDown) {
-          targetRow = Math.min(TOTAL_ROWS - 1, startRow + Math.floor((CANVAS_HEIGHT - COL_HEADER_HEIGHT) / ROW_HEIGHT));
-        }
-        
-        // Update selection with calculated cell
-        const newSelection = {
-          startRow: Math.min(startSelection.r, targetRow),
-          endRow: Math.max(startSelection.r, targetRow),
-          startCol: Math.min(startSelection.c, targetCol),
-          endCol: Math.max(startSelection.c, targetCol),
-          isRange: startSelection.r !== targetRow || startSelection.c !== targetCol
-        };
-        setSelection(newSelection);
-      }
-      return;
+const handlePointerCancel = useCallback((e) => {
+  if (e.pointerId === pointerDownId) {
+    console.log("pointer cancel", e.pointerId);
+    
+    if (isResizing) {
+      setIsResizing(false);
+      setResizeType(null);
+      setResizeIndex(null);
+      setResizeStartPos(0);
+      setResizeStartSize(0);
     }
-
-    const { r, c } = cell;
-
-    // Update selection
-    const newSelection = {
-      startRow: Math.min(startSelection.r, r),
-      endRow: Math.max(startSelection.r, r),
-      startCol: Math.min(startSelection.c, c),
-      endCol: Math.max(startSelection.c, c),
-      isRange: startSelection.r !== r || startSelection.c !== c
-    };
-    setSelection(newSelection);
-  }, [isSelecting, isEditing, pointerDownId, startSelection, getCellFromPointer, autoScrollInterval, scrollLeft, visibleRange]);
-
-  const handlePointerUp = useCallback((e) => {
-    if (e.pointerId === pointerDownId) {
-      console.log("pointer up", e.pointerId);
-      setIsSelecting(false);
-      setPointerDownId(null);
-      setStartSelection(null);
-      setShiftKey(false);
-      
-      // Clear auto-scroll interval
-      if (autoScrollInterval) {
-        clearInterval(autoScrollInterval);
-        setAutoScrollInterval(null);
-      }
-      
-      // Release pointer capture
-      if (canvasRef.current) {
-        canvasRef.current.releasePointerCapture(e.pointerId);
-      }
+    
+    setIsSelecting(false);
+    setIsSelectingHeader(false);
+    setHeaderSelectionType(null);
+    setPointerDownId(null);
+    setStartSelection(null);
+    setShiftKey(false);
+    
+    // Clear auto-scroll interval
+    if (autoScrollInterval) {
+      clearInterval(autoScrollInterval);
+      setAutoScrollInterval(null);
     }
-  }, [pointerDownId, autoScrollInterval]);
+  }
+}, [pointerDownId, autoScrollInterval, isResizing, isSelectingHeader]);
 
-  const handlePointerCancel = useCallback((e) => {
-    if (e.pointerId === pointerDownId) {
-      console.log("pointer cancel", e.pointerId);
-      setIsSelecting(false);
-      setPointerDownId(null);
-      setStartSelection(null);
-      setShiftKey(false);
-      
-      // Clear auto-scroll interval
-      if (autoScrollInterval) {
-        clearInterval(autoScrollInterval);
-        setAutoScrollInterval(null);
-      }
-    }
-  }, [pointerDownId, autoScrollInterval]);
+  // ... keep existing code (handleDoubleClick, useEffect for auto-scroll cleanup, etc.)
 
   // Double click/tap handler
   const handleDoubleClick = useCallback((e) => {
@@ -672,6 +1055,8 @@ export default function GridPage() {
       }
     }
   }, [selected.r, selected.c, isEditing]);
+
+  // ... keep existing code (handleKeyDown, handleVerticalScroll, handleHorizontalScroll, and all other functions)
 
   const handleKeyDown = (e) => {
     // If we're editing, handle edit-specific keys
@@ -822,6 +1207,7 @@ const handleHorizontalScroll = (e) => {
     finishEditing(true);
   }
 };
+
   const handleUndo = () => {
     if (historyIndex > 0) {
       setHistoryIndex(historyIndex - 1);
@@ -964,8 +1350,8 @@ const handleHorizontalScroll = (e) => {
     }
   }, [handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel, handleDoubleClick]);
 
-const totalScrollHeight = TOTAL_ROWS * ROW_HEIGHT;
-const totalScrollWidth = TOTAL_COLS * COL_WIDTH;
+const totalScrollHeight = getTotalScrollHeight(rowHeights, TOTAL_ROWS);
+const totalScrollWidth = getTotalScrollWidth(colWidths, TOTAL_COLS);
 
 return (
   <div className="spreadsheet-container">
@@ -1025,34 +1411,34 @@ return (
 </div>
 
 
-        {isEditing && (
-          <input
-            ref={cellInputRef}
-            type="text"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              e.stopPropagation();
-              finishEditing(true, true);
-            } else if (e.key === 'Escape') {
-              e.preventDefault();
-              e.stopPropagation();
-              finishEditing(false);
-            }
-          }}
-            onBlur={() => finishEditing(true)}
-            className="cell-input"
-            style={{
-              left: editPosition.x,
-              top: editPosition.y,
-              width: COL_WIDTH - 10,
-              height: ROW_HEIGHT - 2,
-              fontFamily: fontFamily
-            }}
-          />
-        )}
+       {isEditing && !isResizing && (
+  <input
+    ref={cellInputRef}
+    type="text"
+    value={editValue}
+    onChange={(e) => setEditValue(e.target.value)}
+    onKeyDown={(e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        finishEditing(true, true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        finishEditing(false);
+      }
+    }}
+    onBlur={() => finishEditing(true)}
+    className="cell-input"
+    style={{
+      left: editPosition.x,
+      top: editPosition.y,
+      width: editPosition.width - 10,
+      height: editPosition.height - 2,
+      fontFamily: fontFamily
+    }}
+  />
+)}
       </div>
     </div>
   </div>
